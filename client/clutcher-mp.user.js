@@ -937,6 +937,96 @@
     syncRemoteModels();
   }, 50);
 
+
+  function updateObjectiveVisual(game,state) {
+    if(!game || assignedMode!=='defusal' || !state?.objective || !game.modeCtl)return;
+    const ctl=game.modeCtl, o=state.objective, p=game.player;
+    // Only the server can assign the bomb carrier.
+    ctl.carrier=o.carrier===playerId ? p : remoteModels.get(o.carrier) || null;
+    if(o.carrier===playerId && p.team==='T' && state.phase!=='ended') {
+      if(game.weapons?.slots && game.weapons.slots[5]!=='c4') {
+        game.weapons.slots[5]='c4';
+        game.weapons.states.c4 ||= {ammo:1,reserve:0};
+        game.hud?.updateWeapon?.();
+      }
+    } else if(game.weapons?.slots?.[5]==='c4' && !o.placed) {
+      game.weapons.slots[5]=null;
+      if(game.weapons.current==='c4')game.weapons.equip?.('knife');
+      game.hud?.updateWeapon?.();
+    }
+
+    ctl.plantProgress=o.planter===playerId?o.plantProgress||0:0;
+    ctl.defuseProgress=o.defuser===playerId?o.defuseProgress||0:0;
+    ctl.defuser=o.defuser===playerId?p:remoteModels.get(o.defuser)||null;
+    const planting=ctl.plantProgress>0;
+    const defusing=ctl.defuseProgress>0;
+    if(game.viewmodel)game.viewmodel.action=planting?'plant':defusing?'defuse':null;
+    if(p)p.forceCrouch=planting||defusing;
+    if(planting) {
+      if(game.weapons?.current!=='c4' && game.weapons?.slots?.[5]==='c4')
+        game.weapons.equip?.('c4');
+      const cs2=game.cs2;
+      if(cs2?.has?.('plant') && cs2?.playTimed &&
+          cs2.rig?.current?.getClip?.()?.name!=='plant') {
+        cs2.playTimed('plant',Math.max(.25,3.2*(1-ctl.plantProgress)),
+          {fade:.05,idleAfter:'idle'});
+      }
+    }
+
+    const placed=o.placed;
+    const signature=placed ? [placed.at,placed.by,placed.site].join(':') : null;
+    if(placed && signature!==lastBombSignature) {
+      if(ctl.planted?.mesh)game.scene?.remove?.(ctl.planted.mesh);
+      ctl.planted=null;
+      // Native _tossBomb creates the game's own world C4 mesh. Unlike
+      // ctl.plant(), it does not award client money or decide the round.
+      try {
+        ctl._tossBomb?.(placed.x,placed.y+.02,placed.z,0,0,null);
+        const visual=ctl.dropped;
+        if(visual?.mesh) {
+          visual.mesh.position?.set?.(placed.x,placed.y+.02,placed.z);
+          ctl.bombMesh=visual.mesh;
+          ctl.planted={...placed,mesh:visual.mesh};
+          ctl.dropped=null;
+        }
+        game.audio?.play?.('planted',{pos:placed});
+        game.hud?.announce?.('Bomb planted at '+placed.site,2300);
+      } catch(error) {console.warn('[Clutcher MP] C4 visual:',error);}
+      lastBombSignature=signature;
+    } else if(!placed && lastBombSignature) {
+      try { ctl.cleanupBomb?.(); } catch {}
+      lastBombSignature=null;
+    }
+    if(placed) {
+      ctl.state=state.phase==='planted'?'planted':ctl.state;
+      ctl.bombT=state.phase==='planted'?secondsRemaining():0;
+      if(ctl.planted && ctl.bombMesh)
+        ctl.bombMesh.position?.set?.(placed.x,placed.y+.02,placed.z);
+    }
+  }
+
+  function pulseObjective() {
+    const game=gameInstance(),p=game?.player,ctl=game?.modeCtl;
+    if(!isReady || assignedMode!=='defusal' ||
+        game?.state!=='playing' || !p?.alive || !ctl || !matchState)return;
+    const o=matchState.objective;
+    if(!o)return;
+    const use=!!(game.input?.downA?.('use') || ctl.useHeld);
+    const plantClick=game.weapons?.current==='c4' &&
+      !!(game.input?.mouse1 || ctl.plantHeld);
+    if(matchState.phase==='live' && p.team==='T' && o.carrier===playerId &&
+        (use||plantClick) && ctl.inSite?.(p) && p.onGround &&
+        Math.hypot(p.vx,p.vz)<.35) {
+      send({type:'objective_intent',kind:'plant'});
+    } else if(matchState.phase==='planted' && p.team==='CT' && use &&
+        o.placed && p.onGround && Math.hypot(p.vx,p.vz)<.35 &&
+        Math.hypot(p.x-o.placed.x,p.z-o.placed.z)<1.8) {
+      send({type:'objective_intent',kind:'defuse'});
+    }
+  }
+
+  setInterval(pulseObjective,100);
+
   function secondsRemaining() {
     if (!matchState) return 0;
     if (matchState.phase === 'waiting') return matchState.roundSeconds || 600;

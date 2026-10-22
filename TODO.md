@@ -52,21 +52,23 @@
 
 ## Phase 4 — Gameplay
 
+- [x] v0.5.2: remove inspect synchronization, mock animation, and unsupported inspect packet.
+
 - [x] v0.5.1: hook real `weapons.startReload()` instead of nonexistent `weapons.reload()`.
-- [x] v0.5.1: queue inspect/reload while remote world weapon is loading.
-- [x] v0.5.1: add fallback held-weapon animation for inspect and absent reload clips.
+- [x] v0.5.1: queue reload while remote world weapon is loading.
+- [x] v0.5.1: add fallback held-weapon animation for absent reload clips.
 - [x] v0.5.1: add 4 automated regression tests for source actions and remote rigs.
-- [ ] Verify native reload clips and inspect motion inside two live game sessions.
+- [ ] Verify native reload clips inside two live game sessions.
 
 
 - [x] Replicate equipped weapon/knife skins, kit, wear and seed.
 - [x] Replicate glove models and glove paint/float data.
 - [x] Handle non-default knives through the agent's world-model API.
-- [x] Relay inspect, draw, reload stages, empty-mag reload, knife attack, shot, step, landing, scope, grenade gesture, death and respawn.
+- [x] Relay draw, reload stages, empty-mag reload, knife attack, shot, step, landing, scope, grenade gesture, death and respawn.
 - [x] Filter cosmetic payload keys, cap strings/nesting, and validate animation types server-side.
 - [x] Add cosmetic and animation unit tests.
 - [ ] Verify *every* gun and knife skin against the live game render pipeline.
-- [ ] Verify first/third-person inspect, reload, crouch, walk, firing and weapon swap clips in two browsers.
+- [ ] Verify reload, crouch, walk, firing and weapon swap clips in two browsers.
 - [ ] Evaluate sticker/charm visibility and agent outfit customization if supported by the game assets.
 - [ ] Implement actual grenade objects and objective action replication.
 

@@ -967,7 +967,7 @@
         game.weapons.states.c4 ||= {ammo:1,reserve:0};
         game.hud?.updateWeapon?.();
       }
-    } else if(game.weapons?.slots?.[5]==='c4' && !o.placed) {
+    } else if(game.weapons?.slots?.[5]==='c4') {
       game.weapons.slots[5]=null;
       if(game.weapons.current==='c4')game.weapons.equip?.('knife');
       game.hud?.updateWeapon?.();

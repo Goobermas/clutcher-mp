@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name         Clutcher MP - Multiplayer Bridge
 // @namespace    https://sillyhack.com/
-// @version      0.1.0
+// @version      0.1.1
 // @description  New Clutcher multiplayer WebSocket client (networking prototype)
 // @author       SillyHack
-// @match        https://clutcher.io/*
-// @match        https://*.clutcher.io/*
+// @match        *://clutcher.io/*
+// @match        *://*.clutcher.io/*
 // @run-at       document-idle
 // @grant        GM_getValue
 // @grant        GM_setValue
@@ -16,15 +16,19 @@
 
   if (window.top !== window.self) return;
 
-  // IMPORTANT: Clutcher is HTTPS, so this MUST be a TLS-enabled WSS endpoint.
-  // The current plain Node.js server on port 8085 will require TLS or a WSS proxy.
-  const DEFAULT_URL = 'wss://mp.sillyhack.com:8085/ws';
+  // The existing TLS reverse proxy serves WSS publicly on port 443.
+  // The Node.js backend can continue listening internally on port 8085.
+  const DEFAULT_URL = 'wss://mp.sillyhack.com/ws';
+  const PREVIOUS_DEFAULT_URL = 'wss://mp.sillyhack.com:8085/ws';
   const DEFAULT_ROOM = 'lobby';
   const PROTOCOL_VERSION = 1;
   const SEND_INTERVAL_MS = 50;
   const PING_INTERVAL_MS = 2000;
 
-  const savedUrl = GM_getValue('clutcher_mp_url', DEFAULT_URL);
+  const storedUrl = GM_getValue('clutcher_mp_url', DEFAULT_URL);
+  // Upgrade only the former script default; preserve manually configured URLs.
+  const savedUrl = storedUrl === PREVIOUS_DEFAULT_URL ? DEFAULT_URL : storedUrl;
+  if (savedUrl !== storedUrl) GM_setValue('clutcher_mp_url', savedUrl);
   const savedRoom = GM_getValue('clutcher_mp_room', DEFAULT_ROOM);
 
   let socket = null;

@@ -78,3 +78,22 @@ A visual state is **not** an authoritative gameplay event. There is still
 no synchronized server-side damage, bomb or grenade physics, and some skins,
 stickers or weapon-specific third-person animations may require further
 asset-specific work. Live visual behavior hasn't been verified yet.
+
+## v0.5.1 reload/inspect repair
+
+Reload was not being broadcast because the old hook used `weapons.reload`,
+whereas the game calls `weapons.startReload()`. v0.5.1 listens to the correct
+entry point and passes the third-person world-model ID to its real reload
+animation API. Inspect is recognized from the viewmodel's inspect call.
+If the third-person agent has no inspect clip, the remote gun tilts and
+raises temporarily rather than staying completely still. A matching fallback
+is provided for weapons with no available third-person reload clip.
+
+Both actions wait briefly for the receiving player's asynchronously loaded
+weapon model. These changes are isolated to the Tampermonkey client;
+the existing v0.5 Node.js server already supports the events.
+
+**To verify:** both players install the latest script, join the same room and
+load into a map. Press R to reload a non-full gun and inspect with the game's
+Inspect binding. Open DevTools to inspect `[Clutcher MP]` logs if a specific
+weapon still lacks a native third-person clip.

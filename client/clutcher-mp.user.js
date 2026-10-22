@@ -55,6 +55,7 @@
   const remoteModels = new Map();
   const localProjectiles=new Map();
   const remoteProjectiles=new Map();
+  const pendingProjectiles=new Map();
   let grenadeSerial=0;
   let previousGrenadeManager=null;
   let lastObjectivePulse=0;
@@ -765,6 +766,7 @@
     for(const id of [...remoteProjectiles.keys()])releaseRemoteProjectile(id);
     localProjectiles.clear();
     remoteProjectiles.clear();
+    pendingProjectiles.clear();
     lastBombSignature=null;
   }
 
@@ -772,7 +774,11 @@
     if (!data || !NADE_TYPES.has(data.grenade) || data.owner===playerId ||
         ![data.x,data.y,data.z,data.vx,data.vy,data.vz].every(Number.isFinite)) return;
     const game=gameInstance(),mgr=game?.grenadeMgr;
-    if(!mgr?.throwFrom || game.state!=='playing') return;
+    if(!mgr?.throwFrom || game.state!=='playing') {
+      pendingProjectiles.set(data.id,data);
+      return;
+    }
+    pendingProjectiles.delete(data.id);
     let g=remoteProjectiles.get(data.id);
     if (!g) {
       const owner={id:data.owner,team:data.team,_mpRemoteGrenadeOwner:true};
@@ -802,9 +808,18 @@
     g.fly?.setPos?.(g.x,g.y,g.z);
   }
 
+  function receiveProjectile(data) {
+    const remote=remoteProjectiles.get(data.id);
+    const pending=pendingProjectiles.get(data.id);
+    const prev=remote ? {grenade:remote.id,owner:remote.owner?.id,
+      team:remote.owner?.team} : pending || {};
+    ensureRemoteProjectile({...prev,...data});
+  }
+
   function applyRemoteGrenadeEffect(message) {
     const game=gameInstance(),mgr=game?.grenadeMgr;
     if(!mgr)return;
+    pendingProjectiles.delete(message.id);
     const known=remoteProjectiles.get(message.id);
     if(!known || !['flash','smoke','he','fire','decoy'].includes(message.effect))return;
     const owner=known.owner;
@@ -885,6 +900,8 @@
     const game=gameInstance();
     if(!isReady || !joinedRoom || game?.state!=='playing')return;
     installGrenadeHooks(game);
+    for(const pending of [...pendingProjectiles.values()])
+      ensureRemoteProjectile(pending);
     for(const [id,g] of localProjectiles) {
       if(!game.grenadeMgr.list.includes(g)) {
         localProjectiles.delete(id);
@@ -1444,12 +1461,7 @@
           break;
         case 'grenade_spawn':
         case 'grenade_state':
-          ensureRemoteProjectile(message.type==='grenade_state'
-            ? {...message,...(remoteProjectiles.get(message.id)
-              ? {grenade:remoteProjectiles.get(message.id).id,
-                 owner:remoteProjectiles.get(message.id).owner?.id,
-                 team:remoteProjectiles.get(message.id).owner?.team}
-              : {})} : message);
+          receiveProjectile(message);
           break;
         case 'grenade_effect':
           applyRemoteGrenadeEffect(message);

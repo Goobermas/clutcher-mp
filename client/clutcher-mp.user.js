@@ -1334,6 +1334,22 @@
         case 'player_action':
           remoteAction(message);
           break;
+        case 'grenade_snapshot':
+          if(Array.isArray(message.projectiles))
+            for(const projectile of message.projectiles)ensureRemoteProjectile(projectile);
+          break;
+        case 'grenade_spawn':
+        case 'grenade_state':
+          ensureRemoteProjectile(message.type==='grenade_state'
+            ? {...message,...(remoteProjectiles.get(message.id)
+              ? {grenade:remoteProjectiles.get(message.id).id,
+                 owner:remoteProjectiles.get(message.id).owner?.id,
+                 team:remoteProjectiles.get(message.id).owner?.team}
+              : {})} : message);
+          break;
+        case 'grenade_effect':
+          applyRemoteGrenadeEffect(message);
+          break;
         case 'pong':
           if (Number.isSafeInteger(message.nonce)) {
             $('mpPing').textContent = 'Ping: ' + Math.max(0, Date.now() - message.nonce) + 'ms';
@@ -1360,6 +1376,7 @@
       $('mpMapName').textContent = 'No map';
       heldKeys.clear();
       clearRemoteModels();
+      clearProjectiles();
       clearMatch();
       updateStats();
       draw();
@@ -1409,6 +1426,7 @@
     $('mpMapName').textContent = 'No map';
     clearMatch();
     clearRemoteModels();
+    clearProjectiles();
     releaseNativeRoundLogic();
     updateStats();
     draw();

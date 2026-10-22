@@ -93,3 +93,25 @@ Local first-person inspect remains untouched.
 **To verify:** both players install the current script, join the same room,
 load the map, and press R with a partly empty magazine. Check whether the
 other player sees the reload. No remote inspect animation should occur.
+
+## Multiplayer C4 and grenade physics (v0.6)
+
+Previously, the multiplayer round-clock hook disabled the native Defusal
+controller's plant logic. Now each loaded T's normal plant input is forwarded
+as a continuous intent to the Node server. The server owns carrier
+assignment, plant progress, shared C4 placement, the 40-second fuse,
+and CT defuse progress. Remote browsers display the native planted C4
+model and controller HUD fields.
+
+All native grenade types use **source-client projectile simulation**: the
+thrower's actual position and velocity are relayed about 20 times per second.
+The receiving browser draws that model without independently simulating
+collisions. An event from the source then triggers Clutcher's actual flash,
+smoke, molotov/incendiary flame and HE presentation at the same location.
+
+Visual effects are still client-side, so slight render latency, random
+particle variation, and assets may differ. Grenade damage and C4 drop/transfer
+are not yet network-authoritative. Try planting with your team's assigned
+carrier by holding Use at a site, then try flash/smoke/fire throws while
+both browsers have the same room/map loaded. A server restart and updated
+Tampermonkey script are required.

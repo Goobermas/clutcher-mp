@@ -95,10 +95,20 @@ wss.on("connection", (socket) => {
 
     try {
       switch (data.type) {
-        case "join_room":
-          world.join(session, data.room, socket);
-          send(socket, { type: "joined", room: session.roomId });
+        case "join_room": {
+          const assignment = world.join(session, data.room, socket, {
+            map: data.map,
+            mode: data.mode
+          });
+          send(socket, {
+            type: "joined",
+            room: session.roomId,
+            team: assignment.team,
+            map: assignment.map,
+            mode: assignment.mode
+          });
           break;
+        }
         case "input":
           world.setInput(session, data.x, data.y);
           break;

@@ -7,7 +7,7 @@ Connect to `/ws`. All messages are UTF-8 JSON objects with a `type` field. The R
 Join a room (creates it if it does not exist):
 
 ```json
-{"type":"join_room","room":"lobby"}
+{"type":"join_room","room":"lobby","map":"oasis","mode":"defusal"}
 ```
 
 Send a movement direction (not an absolute position):
@@ -33,13 +33,13 @@ On connection:
 After joining:
 
 ```json
-{"type":"joined","room":"lobby"}
+{"type":"joined","room":"lobby","team":"CT","map":"oasis","mode":"defusal"}
 ```
 
 At 20 Hz while rooms exist:
 
 ```json
-{"type":"snapshot","room":"lobby","tick":42,"players":[{"id":"<uuid>","x":12,"y":6}]}
+{"type":"snapshot","room":"lobby","tick":42,"players":[{"id":"<uuid>","team":"CT","x":12,"y":6}]}
 ```
 
 For ping / validation:
@@ -63,3 +63,12 @@ For ping / validation:
 - Rooms exist only in memory; closing the connection removes the player and empty rooms.
 
 This is a development prototype: there is **no login, TLS termination, matchmaking, combat, collision or persistence**. Do not expose it publicly without configuring access controls and WSS.
+
+## Automatic teams and shared game settings (v0.2)
+
+- Every room assigns teams **server-side**: first connected member is CT, second is T, then joiners go to the smaller team (CT breaks ties).
+- Clients cannot request a specific team. Leaving a room frees that team's slot for the next joiner; existing players are **not** automatically swapped during a match.
+- The first room member sets `map` (`oasis` or `dusker`) and `mode` (`defusal` or `dm`). All subsequent joiners inherit both.
+- When a room has only one player, that player can change its map/mode by sending another `join_room`. Once two or more are in the room, settings are locked until it becomes empty.
+- The server responds with the assigned `team`, `map`, and `mode` in every `joined` acknowledgement.
+- Snapshot player entries now include `team` alongside the current 2D test coordinates.

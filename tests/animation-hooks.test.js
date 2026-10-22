@@ -7,11 +7,11 @@ const userscript = readFileSync(new URL("../client/clutcher-mp.user.js", import.
 function section(start, end) {
   const a = userscript.indexOf(start);
   const b = userscript.indexOf(end, a);
-  assert.ok(a >= 0 && b > a, "Expected scripts contain named sections");
+  assert.ok(a >= 0 && b > a, "Expected named userscript sections");
   return userscript.slice(a, b);
 }
 
-test("actual Clutcher startReload and inspect calls broadcast once and preserve native code", () => {
+test("native reload broadcasts once; local inspect remains untouched", () => {
   const emitted = [];
   const install = new Function("sendVisualAction", "installCosmeticHooks",
     section("  function installActionHooks(game) {", "\n  function publishGameState()") +
@@ -21,104 +21,100 @@ test("actual Clutcher startReload and inspect calls broadcast once and preserve 
   function makeObjects() {
     return {
       weapons: {
-        current: "ak47", reloading: false,
-        def() { return { reload: 2.7, mag: 30 }; },
-        state() { return { ammo: 0, reserve: 70 }; },
-        startReload() { this.reloading = true; return "native-reload"; },
-        knifeAttack() {}, setWeapon() {}, setScope() {},
-        throwGrenade() {}
+        current:"ak47", reloading:false,
+        def() {return {reload:2.7, mag:30};},
+        state() {return {ammo:0, reserve:70};},
+        startReload() {this.reloading=true; return "native-reload";},
+        knifeAttack() {}, setWeapon() {}, setScope() {}, throwGrenade() {}
       },
       viewmodel: {
-        inspectT: 0,
-        inspect() { this.inspectT = 2.8; return "native-inspect"; }
+        inspectT:0,
+        inspect() {this.inspectT=2.8; return "native-inspect";}
       }
     };
   }
-  const game = { ...makeObjects(), fireBullet() {}, dealDamage() {}, audio: null };
+
+  const game = {...makeObjects(), fireBullet() {}, dealDamage() {}, audio:null};
+  const originalInspect = game.viewmodel.inspect;
   install(game);
+  assert.equal(game.viewmodel.inspect, originalInspect, "Never hook local inspect");
   assert.equal(game.weapons.startReload(), "native-reload");
   assert.equal(game.viewmodel.inspect(), "native-inspect");
-  assert.deepEqual(emitted.map(x => x.kind), ["reload", "inspect"]);
+  assert.deepEqual(emitted.map(x => x.kind), ["reload"]);
   assert.equal(emitted[0].empty, true);
   assert.equal(emitted[0].duration, 2.7);
-  emitted.length = 0;
+
+  emitted.length=0;
   install(game);
   game.weapons.startReload();
   game.viewmodel.inspect();
-  assert.equal(emitted.length, 2, "No duplicate hooks on same object");
-  emitted.length = 0;
+  assert.deepEqual(emitted.map(x => x.kind), ["reload"], "No duplicate hooks");
+
+  emitted.length=0;
   Object.assign(game, makeObjects());
+  const nextInspect = game.viewmodel.inspect;
   install(game);
+  assert.equal(game.viewmodel.inspect, nextInspect, "No inspect hook on replacement viewmodel");
   game.weapons.startReload();
   game.viewmodel.inspect();
-  assert.deepEqual(emitted.map(x => x.kind), ["reload", "inspect"],
-    "New scene load's weapons/viewmodel are hooked");
+  assert.deepEqual(emitted.map(x => x.kind), ["reload"]);
 });
 
-test("inspect falls back to animating held weapon when no third-person clip exists", () => {
+test("reload fallback moves held weapon then restores the exact transform", () => {
   let now = 1000;
-  const methods = new Function("performance", "deferredActions", "remoteAction",
-    section("  function stopRemoteInspect(bot) {", "  function remoteAction(message") +
-    "\nreturn {startRemoteInspect, startRemoteReloadFallback, animateRemoteInspect, stopRemoteInspect};"
-  )({ now: () => now }, new Map(), () => {});
+  const methods = new Function("performance",
+    section("  function stopRemoteReloadFallback(bot) {",
+      "  function deferRemoteAction(bot, message) {") +
+    "\nreturn {startRemoteReloadFallback, animateRemoteReloadFallback, stopRemoteReloadFallback};"
+  )({now:()=>now});
 
   function vector(x,y,z) {
-    return {x,y,z,set(a,b,c) {this.x=a;this.y=b;this.z=c;}};
+    return {x,y,z,set(a,b,c){this.x=a;this.y=b;this.z=c;}};
   }
-  const heldWeapon = {position:vector(0,0,0),rotation:vector(0,0,0)};
-  const bot = { alive:true, weapon:"ak47", crouchT:0,
-    cs2Agent:{ heldWeapon, _weaponId:"weapon_ak47",
-      loco:{actionName:()=>null,hasAction:()=>false,playAction:()=>0} }
-  };
-  assert.equal(methods.startRemoteInspect(bot), true);
-  now = 2200;
-  methods.animateRemoteInspect(bot);
-  assert.ok(Math.abs(heldWeapon.rotation.y) > 0.01,
-    "The remote observer visibly rotates the held gun");
-  now = 4000;
-  methods.animateRemoteInspect(bot);
-  assert.equal(heldWeapon.rotation.y, 0,
-    "Weapon pose restores after inspection");
-  assert.equal(bot._mpInspect, null);
-
-  // Reload has its own fallback when no third-person reload clip is bundled.
-  now = 5000;
+  const mesh={position:vector(0,0,0),rotation:vector(0,0,0)};
+  const bot={alive:true,cs2Agent:{heldWeapon:mesh}};
   assert.equal(methods.startRemoteReloadFallback(bot, 2), true);
-  now = 6000;
-  methods.animateRemoteInspect(bot);
-  assert.ok(Math.abs(heldWeapon.position.y) > 0.01, "Fallback visibly lowers weapon");
-  now = 7200;
-  methods.animateRemoteInspect(bot);
-  assert.equal(heldWeapon.position.y, 0);
+  now=2000;
+  methods.animateRemoteReloadFallback(bot);
+  assert.ok(Math.abs(mesh.position.y)>0.01,"Reload fallback visibly moves weapon");
+  now=3200;
+  methods.animateRemoteReloadFallback(bot);
+  assert.equal(mesh.position.y,0);
+  assert.equal(mesh.rotation.z,0);
+  assert.equal(bot._mpReloadPose,null);
 });
 
-test("native third-person reload action uses the bot renderer's weapon id", () => {
+test("remote reload uses correct third-person weapon ID", () => {
   let called;
-  const game = {};
-  const remote = { alive:true,weapon:"ak47",crouchT:0,
-    cs2Agent:{_weaponId:"weapon_ak47",loco:{},heldWeapon:{},reload(...args){called=args;return 2.7;}}
+  const remote={alive:true,weapon:"ak47",crouchT:0,
+    cs2Agent:{_weaponId:"weapon_ak47",loco:{},heldWeapon:{},
+      reload(...args){called=args;return 2.7;}}
   };
-  const models = new Map([["peer", remote]]);
   const remoteAction = new Function("gameInstance","remoteModels","deferRemoteAction",
-    "startRemoteInspect","performance",
+    "startRemoteReloadFallback","performance",
     section("  function remoteAction(message", "  function sendVisualAction(") +
     "\nreturn remoteAction;"
-  )(() => game,models,()=>{},()=>true,{now:()=>3000});
+  )(() => ({}), new Map([["peer", remote]]),()=>{},()=>false,{now:()=>1000});
   remoteAction({id:"peer",kind:"reload",duration:2.7,empty:true});
   assert.deepEqual(called,["weapon_ak47",2.7,{empty:true,crouched:false}]);
 });
 
-test("reload events before the remote weapon finishes loading are deferred", () => {
-  const deferred = [];
-  const models = new Map([["peer", {
-    alive:true,weapon:"ak47",crouchT:0,
-    cs2Agent:{loco:{},heldWeapon:null}
-  }]]);
+test("remote reload waits for asynchronous weapon model initialization", () => {
+  const deferred=[];
+  const models=new Map([["peer",{alive:true,weapon:"ak47",
+    cs2Agent:{loco:{},heldWeapon:null}}]]);
   const remoteAction = new Function("gameInstance","remoteModels","deferRemoteAction",
-    "startRemoteInspect","performance",section("  function remoteAction(message",
-      "  function sendVisualAction(") + "\nreturn remoteAction;"
-  )(() => ({}),models,(_,message) => deferred.push(message),()=>true,{now:()=>10});
-  remoteAction({id:"peer",kind:"inspect",weapon:"ak47"});
+    "startRemoteReloadFallback","performance",
+    section("  function remoteAction(message", "  function sendVisualAction(") +
+    "\nreturn remoteAction;"
+  )(() => ({}), models, (_,m)=>deferred.push(m),()=>false,{now:()=>1});
   remoteAction({id:"peer",kind:"reload",weapon:"ak47",duration:2});
-  assert.deepEqual(deferred.map(x => x.kind),["inspect","reload"]);
+  assert.deepEqual(deferred.map(m=>m.kind),["reload"]);
+});
+
+test("inspect is absent from multiplayer action handling", () => {
+  assert.equal(userscript.includes("sendVisualAction('inspect'"), false);
+  assert.equal(userscript.includes("case 'inspect':"), false);
+  assert.equal(userscript.includes("startRemoteInspect"), false);
+  assert.equal(userscript.includes("_mpInspect"), false);
 });

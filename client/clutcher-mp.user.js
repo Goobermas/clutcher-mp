@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Clutcher MP - Multiplayer Bridge
 // @namespace    https://sillyhack.com/
-// @version      0.1.1
+// @version      0.2.0
 // @description  New Clutcher multiplayer WebSocket client (networking prototype)
 // @author       SillyHack
 // @match        *://clutcher.io/*
@@ -9,6 +9,7 @@
 // @run-at       document-idle
 // @grant        GM_getValue
 // @grant        GM_setValue
+// @grant        unsafeWindow
 // ==/UserScript==
 
 (() => {
@@ -20,6 +21,7 @@
   // The Node.js backend can continue listening internally on port 8085.
   const DEFAULT_URL = 'wss://mp.sillyhack.com/ws';
   const PREVIOUS_DEFAULT_URL = 'wss://mp.sillyhack.com:8085/ws';
+  const PAGE = typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
   const DEFAULT_ROOM = 'lobby';
   const PROTOCOL_VERSION = 1;
   const SEND_INTERVAL_MS = 50;
@@ -35,6 +37,11 @@
   let playerId = null;
   let joinedRoom = null;
   let players = [];
+  let assignedTeam = null;
+  let assignedMap = null;
+  let assignedMode = null;
+  let pendingPlay = false;
+  let launchBusy = false;
   let autoReconnect = true;
   let retryTimer = null;
   let retryDelay = 1500;
@@ -76,6 +83,9 @@
       canvas { display: block; width: 100%; background: #0c1524; border: 1px solid #334155;
         border-radius: 5px; }
       .hint { margin: 6px 0 0; color: #8190a7; font-size: 11px; }
+      .team { color: #8bd0ff; font-weight: 600; }
+      /* Native team cards are not used in server-assigned multiplayer. */
+      #teamsel { display: none !important; }
     </style>
     <section class="panel">
       <div class="head">
@@ -98,9 +108,10 @@
           <button class="action" id="mpDisconnect">Leave</button>
         </div>
         <div id="mpStatus" role="status">Disconnected</div>
+        <div class="stats"><span>Your team: <b class="team" id="mpTeam">—</b></span><span id="mpMapName">No map</span></div>
         <div class="stats"><span id="mpPlayers">0 players</span><span id="mpPing">Ping: —</span></div>
         <canvas id="mpMap" width="236" height="126"></canvas>
-        <p class="hint">WASD sends test movement. Dots show network positions, not in-game models.</p>
+        <p class="hint">Play starts the real map with 0 bots and an assigned team. Remote positions are still a test overlay, not in-game models.</p>
       </div>
     </section>`;
 
@@ -141,6 +152,115 @@
     retryDelay = Math.min(retryDelay * 2, 20000);
   }
 
+  function chosenOption(group, fallback) {
+    const selected = document.querySelector('#opt-' + group + ' button.sel');
+    return selected?.dataset?.v || fallback;
+  }
+
+  function gameInstance() {
+    return PAGE.game || window.game || null;
+  }
+
+  function enforceNoBots() {
+    const game = gameInstance();
+    if (!game || typeof game.startGame !== 'function') return false;
+
+    // Also enforces zero bots if native code attempts to start another local match.
+    if (!game.__clutcherMpNoBots) {
+      const originalStart = game.startGame;
+      game.startGame = function (map, bots, difficulty, mode) {
+        return originalStart.call(this, map, 0, difficulty, mode);
+      };
+      game.__clutcherMpNoBots = true;
+    }
+
+    // Keep the native Settings UI consistent and avoid expensive bot warmups.
+    const off = document.querySelector('#opt-botson button[data-v="0"]');
+    if (off && !off.classList.contains('sel')) off.click();
+    return true;
+  }
+
+  async function launchAssignedGame() {
+    if (launchBusy || !pendingPlay) return;
+    if (!['CT', 'T'].includes(assignedTeam) || !joinedRoom) {
+      setStatus('Waiting for server to assign a team...', 'connecting');
+      return;
+    }
+    const game = gameInstance();
+    if (!game || typeof game.startGame !== 'function') {
+      setStatus('Clutcher is still loading. Try Play again.', 'connecting');
+      return;
+    }
+    if (game.state === 'playing') {
+      pendingPlay = false;
+      return;
+    }
+    if (game.state !== 'menu' && game.state !== 'teamselect') {
+      setStatus('Return to the game menu before pressing Play.');
+      pendingPlay = false;
+      return;
+    }
+
+    launchBusy = true;
+    pendingPlay = false;
+    enforceNoBots();
+    const map = assignedMap || 'oasis';
+    const mode = assignedMode || 'defusal';
+    setStatus('Loading ' + map + ' as ' + assignedTeam + ' (0 bots)...', 'connected');
+
+    try {
+      if (game.state === 'menu') {
+        const ok = await game.startGame(map, 0, 0, mode);
+        if (!ok) throw new Error('Game could not load the selected map.');
+      }
+      if (game.state !== 'teamselect') throw new Error('Game did not enter the expected loading state.');
+
+      // The game itself needs finishTeamSelect() to initialize the character,
+      // weapons and round. Only the assigned team is passed, with bots set to 0.
+      if (game._pending) game._pending.botCount = 0;
+      await game.finishTeamSelect(assignedTeam);
+      if (game.state !== 'playing') throw new Error('Game did not finish entering the map.');
+      setStatus('Playing ' + map + ' • ' + assignedTeam + ' • no bots', 'connected');
+    } catch (error) {
+      console.error('[Clutcher MP] Auto-launch failed:', error);
+      setStatus('Could not start: ' + (error?.message || String(error)).slice(0, 110));
+    } finally {
+      launchBusy = false;
+    }
+  }
+
+  // Stop the native Play onclick (which normally uses a local bot count and
+  // opens manual team selection). Ask the server to assign a team first.
+  document.addEventListener('click', (event) => {
+    const target = event.target;
+    if (!(target instanceof Element) || !target.closest('#btn-play')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+
+    if (launchBusy) return;
+    pendingPlay = true;
+    enforceNoBots();
+    if (socket?.readyState === WebSocket.OPEN) {
+      joinRoom();
+    } else if (socket?.readyState === WebSocket.CONNECTING) {
+      setStatus('Connecting to server before starting...', 'connecting');
+    } else {
+      connect();
+    }
+  }, true);
+
+  // Ignore manual team-card clicks even if some other game code shows the cards.
+  document.addEventListener('click', (event) => {
+    const element = event.target;
+    if (!(element instanceof Element) || !element.closest('#teamsel [data-team]')) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+  }, true);
+
+  // Poll because Clutcher creates window.game asynchronously via its ES module.
+  setInterval(enforceNoBots, 250);
+
   function connect() {
     stopRetry();
     autoReconnect = true;
@@ -174,6 +294,7 @@
     joinedRoom = null;
     playerId = null;
     players = [];
+    assignedTeam = assignedMap = assignedMode = null;
     updateStats();
     setStatus('Connecting to ' + endpoint.host + '...', 'connecting');
 
@@ -210,10 +331,23 @@
           updateStats();
           break;
         case 'joined':
+          if (!['CT', 'T'].includes(message.team) ||
+              !['oasis', 'dusker'].includes(message.map) ||
+              !['defusal', 'dm'].includes(message.mode)) {
+            pendingPlay = false;
+            setStatus('Outdated server: git pull + restart Node.js for auto teams.');
+            break;
+          }
           joinedRoom = message.room;
+          assignedTeam = message.team;
+          assignedMap = message.map;
+          assignedMode = message.mode;
           players = [];
-          setStatus('Joined room: ' + joinedRoom, 'connected');
+          $('mpTeam').textContent = assignedTeam;
+          $('mpMapName').textContent = assignedMap + ' / ' + assignedMode;
+          setStatus('Room: ' + joinedRoom + ' • Team: ' + assignedTeam, 'connected');
           updateStats();
+          if (pendingPlay) void launchAssignedGame();
           break;
         case 'snapshot':
           if (message.room !== joinedRoom || !Array.isArray(message.players)) break;
@@ -244,6 +378,9 @@
       joinedRoom = null;
       playerId = null;
       players = [];
+      assignedTeam = assignedMap = assignedMode = null;
+      $('mpTeam').textContent = '—';
+      $('mpMapName').textContent = 'No map';
       heldKeys.clear();
       updateStats();
       draw();
@@ -265,11 +402,17 @@
     }
     joinedRoom = null;
     players = [];
-    send({ type: 'join_room', room });
+    send({
+      type: 'join_room',
+      room,
+      map: chosenOption('map', 'oasis'),
+      mode: chosenOption('mode', 'defusal')
+    });
   }
 
   function disconnect() {
     autoReconnect = false;
+    pendingPlay = false;
     stopRetry();
     heldKeys.clear();
     if (socket) {
@@ -280,13 +423,18 @@
     joinedRoom = null;
     playerId = null;
     players = [];
+    assignedTeam = assignedMap = assignedMode = null;
+    $('mpTeam').textContent = '—';
+    $('mpMapName').textContent = 'No map';
     updateStats();
     draw();
     setStatus('Disconnected');
   }
 
   function updateStats() {
-    $('mpPlayers').textContent = players.length + (players.length === 1 ? ' player' : ' players');
+    const ct = players.filter((player) => player.team === 'CT').length;
+    const t = players.filter((player) => player.team === 'T').length;
+    $('mpPlayers').textContent = players.length + ' online • CT ' + ct + ' / T ' + t;
   }
 
   function draw() {
@@ -309,7 +457,7 @@
       const y = canvas.height / 2 + (player.y - centerY) * 0.45;
       if (x < 4 || x > canvas.width - 4 || y < 4 || y > canvas.height - 4) continue;
       const isSelf = player.id === playerId;
-      ctx.fillStyle = isSelf ? '#38bdf8' : '#fbbf24';
+      ctx.fillStyle = player.team === 'CT' ? '#38bdf8' : '#fbbf24';
       ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#cbd5e1';
       ctx.fillText(isSelf ? 'You' : player.id.slice(0, 5), x + 7, y - 5);

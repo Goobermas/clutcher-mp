@@ -120,6 +120,7 @@ export class RoomMatch {
     if (!bothTeamsReady) {
       this.winner = null;
       this.matchWinner = null;
+      this.objective=this.freshObjective();
       this.transition("waiting");
       return;
     }
@@ -141,6 +142,9 @@ export class RoomMatch {
       this.winner = this.mode === "defusal" ? "CT" : null;
       if (this.winner) this.score[this.winner]++;
       this.transition("ended", deadline + this.rules.endMs);
+    } else if (this.phase === "planted") {
+      this.winner="T"; this.score.T++;
+      this.transition("ended",deadline+this.rules.endMs);
     } else if (this.phase === "ended") {
       if (this.mode === "defusal" && (this.score.CT >= this.rules.winRounds ||
           this.score.T >= this.rules.winRounds || this.round >= this.rules.maxRounds)) {
@@ -151,6 +155,7 @@ export class RoomMatch {
         if (this.mode === "defusal") this.round++;
         else this.score = { CT: 0, T: 0 }; // native TDM starts a new match
         this.winner = null;
+        this.objective=this.freshObjective();
         this.transition(this.rules.freezeMs ? "countdown" : "live",
           deadline + (this.rules.freezeMs || this.rules.roundMs));
       }
@@ -159,6 +164,7 @@ export class RoomMatch {
       this.score = { CT: 0, T: 0 };
       this.winner = null;
       this.matchWinner = null;
+      this.objective=this.freshObjective();
       this.transition("countdown", deadline + this.rules.freezeMs);
     }
   }
@@ -177,6 +183,17 @@ export class RoomMatch {
       score: { ...this.score },
       winner: this.winner,
       matchWinner: this.matchWinner,
+      objective: this.mode==="defusal" ? {
+        carrier:this.objective.carrier,
+        planter:this.objective.planter,
+        plantProgress:this.objective.planter
+          ? Math.min(1,(now-this.objective.plantStart)/this.rules.plantMs):0,
+        defuser:this.objective.defuser,
+        defuseProgress:this.objective.defuser
+          ? Math.min(1,(now-this.objective.defuseStart)/this.rules.defuseMs):0,
+        placed:this.objective.placed && {...this.objective.placed},
+        duration:this.rules.bombMs/1000
+      } : null,
       maxRounds: rules.maxRounds,
       winRounds: rules.winRounds,
       ct: list.filter(player => player.team === "CT").length,

@@ -52,6 +52,20 @@
 
 ## Phase 4 — Gameplay
 
+- [x] v0.6: server-owned C4 carrier, site-validated plant hold, shared placed state.
+- [x] v0.6: start 40s planted clock; native 3D bomb mesh and local plant visuals.
+- [x] v0.6: accept CT defuse near C4 with uninterrupted hold and server score outcome.
+- [x] v0.6: relay native grenade flight samples for HE, flash, smoke, Molotov, incendiary and decoy.
+- [x] v0.6: disable separate client-side grenade bounces/fuse for remote-owned projectiles.
+- [x] v0.6: trigger shared flash, smoke, fire, and HE effects at owner-simulated positions.
+- [x] v0.6: handle remote grenade arrivals during asynchronous map load.
+- [x] v0.6: test objective and grenade ownership, state, phases and coordinate validation.
+- [ ] Verify C4 planting, defusing and all grenade trajectories in two live sessions.
+- [ ] Mirror existing active smoke/fire effects to late joiners.
+- [ ] Sync C4 dropping/pickup and server-verified defuse-kit ownership.
+- [ ] Add authoritative grenade damage, kill attribution and inventory tracking.
+
+
 - [x] v0.5.2: remove inspect synchronization, mock animation, and unsupported inspect packet.
 
 - [x] v0.5.1: hook real `weapons.startReload()` instead of nonexistent `weapons.reload()`.

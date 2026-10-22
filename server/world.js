@@ -44,7 +44,15 @@ export class World {
     if (session.roomId === roomId) {
       const player = this.rooms.get(roomId)?.get(session.id);
       const settings = this.roomSettings.get(roomId);
-      if (player && settings) return { ...settings, team: player.team };
+      if (player && settings) {
+        // A solo player may change the map/mode before pressing Play.
+        // Once another player joins, the room's settings are locked.
+        if (this.rooms.get(roomId).size === 1) {
+          if (MAPS.includes(options?.map)) settings.map = options.map;
+          if (MODES.includes(options?.mode)) settings.mode = options.mode;
+        }
+        return { ...settings, team: player.team };
+      }
     }
 
     const target = this.rooms.get(roomId);

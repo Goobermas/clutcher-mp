@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Clutcher MP - Multiplayer Bridge
 // @namespace    https://sillyhack.com/
-// @version      0.4.0
+// @version      0.5.0
 // @description  New Clutcher multiplayer WebSocket client (networking prototype)
 // @author       SillyHack
 // @match        *://clutcher.io/*
@@ -184,6 +184,124 @@
 
 
 
+
+  // Copy only visual item metadata; avoid transmitting an entire inventory.
+  function localAppearance(game) {
+    const weapon = game?.weapons?.current || 'knife';
+    const state = game?.weapons?.states?.[weapon] || {};
+    let finish = null;
+    let gloves = null;
+    try { finish = game._carriedFinish?.(weapon, state) || null; } catch {}
+    try { gloves = game._ownGloves?.() || null; } catch {}
+    const item = finish?.item && typeof finish.item === 'object'
+      ? { wear: Number(finish.item.wear) || 0, seed: Number(finish.item.seed) || 0 }
+      : null;
+    const gloveItem = gloves?.item;
+    return {
+      weapon,
+      skin: finish?.skin || null,
+      skinItem: item,
+      gloves: gloves?.model ? {
+        model: String(gloves.model).slice(0, 160),
+        kit: gloves.kit ?? null,
+        item: {
+          wear: Number(gloveItem?.wear) || 0,
+          seed: Number(gloveItem?.seed) || 0
+        }
+      } : null
+    };
+  }
+
+  function cosmeticKey(data) {
+    try { return JSON.stringify([
+      data?.weapon || null, data?.skin || null, data?.skinItem || null, data?.gloves || null
+    ]); } catch { return String(data?.weapon || ''); }
+  }
+
+  // Override native cosmetic selection ONLY for our remote human actors.
+  function installCosmeticHooks(game) {
+    if (!game || game.__clutcherMpCosmetics) return;
+    game.__clutcherMpCosmetics = true;
+    for (const [method, remoteValue] of [
+      ['_botSkin', bot => bot._mpSkin],
+      ['_botSkinName', bot => bot._mpSkin?.name || null],
+      ['_botGloves', bot => bot._mpGloves]
+    ]) {
+      const original = game[method];
+      if (typeof original !== 'function') continue;
+      game[method] = function(bot) {
+        if (bot?._clutcherMpRemote) return remoteValue(bot) ?? null;
+        return original.apply(this, arguments);
+      };
+    }
+  }
+
+  function applyKnifeModel(bot, state) {
+    const model = state?.weapon === 'knife' ? String(state.skin?.weapon || '') : '';
+    if (!/^knife_[a-z0-9_]{1,40}$/i.test(model) ||
+        ['knife_ct', 'knife_t'].includes(model)) {
+      bot._mpAppliedKnife = null;
+      return;
+    }
+    const signature = cosmeticKey(state);
+    if (bot._mpAppliedKnife === signature) return;
+    const agent = bot.cs2Agent;
+    if (!agent?.setWeapon) return;
+    const paint = state.skin?.kit ? {
+      kit: state.skin.kit,
+      item: {
+        wear: Number(state.skinItem?.wear ?? state.skin?.wmin) || 0,
+        seed: Number(state.skinItem?.seed ?? state.skin?.seed) || 0
+      }
+    } : null;
+    try {
+      const result = agent.setWeapon(model, 'knife', paint);
+      const nativeId = bot.team === 'T' ? 'knife_t' : 'knife_ct';
+      const preserveNativeId = () => {
+        if (bot._networkTarget?.weapon === 'knife' && bot.cs2Agent === agent) {
+          // Native bot update compares this bookkeeping id every frame.
+          agent._weaponId = nativeId;
+        }
+      };
+      preserveNativeId();
+      result?.then?.(preserveNativeId)?.catch?.(() => { bot._mpAppliedKnife = null; });
+      bot._mpAppliedKnife = signature;
+    } catch (error) {
+      console.debug('[Clutcher MP] Custom remote knife not available:', error);
+    }
+  }
+
+  function applyRemoteCosmetics(bot, data) {
+    if (!bot || !data) return;
+    const signature = cosmeticKey(data);
+    if (bot._mpAppearanceKey !== signature) {
+      bot._mpAppearanceKey = signature;
+      bot._mpSkin = data.skin || null;
+      bot._mpSkinItem = data.skinItem || null;
+      if (bot._mpSkin && bot._mpSkinItem) {
+        bot._mpSkin = {
+          ...bot._mpSkin,
+          wmin: Number(bot._mpSkinItem.wear) || 0,
+          seed: Number(bot._mpSkinItem.seed) || 0
+        };
+      }
+      bot._mpGloves = data.gloves || null;
+      bot._mpAppliedKnife = null;
+      // Rebuild the held model when the same gun switches finish/wear/seed.
+      if (bot.cs2Agent) bot.cs2Agent._weaponId = null;
+    }
+    if (bot.cs2Agent?.setGloves && bot._mpGlovesKey !== cosmeticKey({gloves:data.gloves})) {
+      bot._mpGlovesKey = cosmeticKey({gloves:data.gloves});
+      try {
+        const gloves = bot._mpGloves;
+        const result = bot.cs2Agent.setGloves(gloves?.model || null,
+          gloves ? {kit:gloves.kit, item:gloves.item} : null,
+          {size:512});
+        result?.catch?.(() => { bot._mpGlovesKey = null; });
+      } catch { bot._mpGlovesKey = null; }
+    }
+  }
+
   // Visual remote players. Reuse the game's model renderer, but never run
   // the normal bot AI. The previous single-player bot count stays ZERO.
   function discoverRemoteConstructor(game) {
@@ -231,11 +349,16 @@
         !state || player.id === playerId) return null;
     const Bot = discoverRemoteConstructor(game);
     if (!Bot) return null;
+    installCosmeticHooks(game);
     try {
       const bot = new Bot(game, player.team === 'CT' ? 'CT' : 'T', state.name || 'Player', 3);
       bot._clutcherMpRemote = player.id;
       bot._networkTarget = state;
       bot.target = { multiplayer: true };
+      bot._mpAppearanceKey = null;
+      bot._mpGlovesKey = null;
+      bot._mpAppliedKnife = null;
+      applyRemoteCosmetics(bot, state);
       bot.x = state.x;
       bot.y = state.y;
       bot.z = state.z;
@@ -265,6 +388,7 @@
         this._visY = this.y;
         // The real game renderer animates the character body, gun and shadow.
         this._updateCS2Body?.(dt, game);
+        applyKnifeModel(this, next);
         this.shadow?.position?.set?.(this.x, this.y + 0.02, this.z);
       };
       game.botMgr.bots.push(bot);
@@ -294,6 +418,7 @@
       if (!model) continue;
       model.team = player.team;
       model._networkTarget = data;
+      applyRemoteCosmetics(model, data);
       if (data.alive && !model.alive) {
         model.alive = true;
         model.health = 100;
@@ -386,12 +511,19 @@
     const values = [p.x, p.y, p.z, p.yaw, p.pitch, p.vx, p.vz];
     if (!values.every(Number.isFinite)) return;
     const name = String(PAGE.localStorage?.getItem?.('clutcher_name') || 'Player');
+    const appearance = localAppearance(game);
     send({
       type:'player_state', name,
       x:p.x, y:p.y, z:p.z,
       yaw:p.yaw, pitch:p.pitch, vx:p.vx, vz:p.vz,
       crouch:!!p.crouching, airborne:!p.onGround,
-      alive:!!p.alive, weapon:game.weapons?.current || 'knife'
+      alive:!!p.alive,
+      ...appearance,
+      scoped: !!game.weapons?.scopeLevel,
+      reloading: !!game.weapons?.reloading,
+      walking: !!game.input?.downA?.('walk'),
+      firing: !!game.input?.mouse1,
+      melee: appearance.weapon === 'knife' && !!game.input?.mouse1
     });
     if (lastGrounded && !p.onGround && p.vy > 0.5) {
       send({ type:'action', kind:'jump' });

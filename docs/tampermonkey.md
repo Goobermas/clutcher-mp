@@ -2,7 +2,7 @@
 
 Install `client/clutcher-mp.user.js` into Tampermonkey and open either `http://clutcher.io/` or `https://clutcher.io/` (including subdomains).
 
-The script adds a small **Clutcher MP** HUD with:
+The script adds a small **Clutcher MP** HUD with native Play integration and:
 
 - WebSocket endpoint, room name, connect/join/disconnect controls
 - Auto-join, reconnect with exponential backoff, connection state, ping and player count
@@ -20,6 +20,18 @@ Your existing reverse proxy exposes `wss://mp.sillyhack.com/ws` (standard public
 - The backend still uses `/ws`; the old multiplayer script used the same path, but **its messages are not interchangeable**. The new Node server expects `join_room`, not legacy `join`/`serverId`; it has no legacy `/servers` discovery API.
 
 If the client fails to connect, verify that the existing reverse proxy forwards the WebSocket upgrade headers and that `mp.sillyhack.com` has a valid TLS certificate. Do not replace the WSS URL with plain `ws://` on an HTTPS page.
+
+## Play button, bots and team assignment (v0.2)
+
+The new Tampermonkey userscript reads the actual game entry points from the supplied `main.js` build: `window.game.startGame(map, botCount, difficulty, mode)` and `window.game.finishTeamSelect(team)`.
+
+1. Once the socket connects, the client joins the selected room. The server assigns CT or T and sends back the room's authoritative map and mode.
+2. Press **PLAY** in Clutcher's native menu. The script intercepts the normal local-game Play button and requests a fresh room acknowledgement so solo players can change map/mode before starting.
+3. On `joined`, the script calls `startGame(map, 0, 0, mode)`, then automatically calls `finishTeamSelect(assignedTeam)` after map loading.
+4. The native team selector and menu outfit choice are hidden. Native bot settings are switched off, and the `startGame` method is wrapped to force **0** bots.
+5. The client HUD displays assigned team, map/mode, and CT/T player counts. The actual game is still a local world per browser, not yet a synchronized 3D multiplayer match.
+
+**Important:** Run the **updated server** with `git pull && npm install && npm test && HOST=127.0.0.1 PORT=8085 npm start` (adapt HOST to your proxy's backend route). Older server builds do not send team/map/mode in `joined` and will be rejected by v0.2 client.
 
 ## Current limitations
 

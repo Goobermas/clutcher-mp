@@ -1,0 +1,371 @@
+// ==UserScript==
+// @name         Clutcher MP - Multiplayer Bridge
+// @namespace    https://sillyhack.com/
+// @version      0.1.0
+// @description  New Clutcher multiplayer WebSocket client (networking prototype)
+// @author       SillyHack
+// @match        https://clutcher.io/*
+// @match        https://*.clutcher.io/*
+// @run-at       document-idle
+// @grant        GM_getValue
+// @grant        GM_setValue
+// ==/UserScript==
+
+(() => {
+  'use strict';
+
+  if (window.top !== window.self) return;
+
+  // IMPORTANT: Clutcher is HTTPS, so this MUST be a TLS-enabled WSS endpoint.
+  // The current plain Node.js server on port 8085 will require TLS or a WSS proxy.
+  const DEFAULT_URL = 'wss://mp.sillyhack.com:8085/ws';
+  const DEFAULT_ROOM = 'lobby';
+  const PROTOCOL_VERSION = 1;
+  const SEND_INTERVAL_MS = 50;
+  const PING_INTERVAL_MS = 2000;
+
+  const savedUrl = GM_getValue('clutcher_mp_url', DEFAULT_URL);
+  const savedRoom = GM_getValue('clutcher_mp_room', DEFAULT_ROOM);
+
+  let socket = null;
+  let playerId = null;
+  let joinedRoom = null;
+  let players = [];
+  let autoReconnect = true;
+  let retryTimer = null;
+  let retryDelay = 1500;
+  const heldKeys = new Set();
+
+  const host = document.createElement('div');
+  host.id = 'clutcher-mp-bridge';
+  host.style.cssText = 'position:fixed;right:14px;bottom:14px;z-index:2147483647;';
+  document.documentElement.appendChild(host);
+  const shadow = host.attachShadow({ mode: 'open' });
+
+  shadow.innerHTML = `
+    <style>
+      :host { all: initial; color-scheme: dark; }
+      *, *::before, *::after { box-sizing: border-box; }
+      .panel { width: 263px; color: #e5e7eb; background: rgba(12,18,29,.96);
+        border: 1px solid #374151; border-radius: 12px; overflow: hidden;
+        box-shadow: 0 10px 35px #0008; font: 12px/1.45 system-ui, sans-serif; }
+      .head { display: flex; align-items: center; gap: 8px; padding: 9px 11px;
+        background: #192438; border-bottom: 1px solid #334155; }
+      .head strong { font-size: 13px; flex: 1; letter-spacing: .2px; }
+      .status-dot { width: 8px; height: 8px; border-radius: 50%; background: #ef4444; }
+      .status-dot.connected { background: #22c55e; }
+      .status-dot.connecting { background: #f59e0b; }
+      .minimize { background: none; border: 0; color: #cbd5e1; font-size: 18px;
+        cursor: pointer; padding: 0 4px; }
+      .body { padding: 10px; }
+      .body.hidden { display: none; }
+      label { display: block; color: #a5b4cc; margin-bottom: 4px; }
+      input { width: 100%; background: #0d1524; color: #e5e7eb; border: 1px solid #45546d;
+        border-radius: 5px; padding: 7px; font: 12px/1.3 system-ui, sans-serif; }
+      .field { margin-bottom: 9px; }
+      .buttons { display: flex; gap: 5px; margin: 9px 0; }
+      button.action { flex: 1; padding: 7px 4px; border: 1px solid #475569; border-radius: 5px;
+        background: #27374e; color: #f1f5f9; font: inherit; cursor: pointer; }
+      button.action:hover { background: #385274; }
+      #mpStatus { min-height: 19px; color: #a5b4cc; overflow-wrap: anywhere; }
+      .stats { display: flex; justify-content: space-between; color: #9ca3af; margin: 6px 0; }
+      canvas { display: block; width: 100%; background: #0c1524; border: 1px solid #334155;
+        border-radius: 5px; }
+      .hint { margin: 6px 0 0; color: #8190a7; font-size: 11px; }
+    </style>
+    <section class="panel">
+      <div class="head">
+        <span class="status-dot" id="mpDot"></span>
+        <strong>Clutcher MP <small style="color:#94a3b8">v0.1</small></strong>
+        <button class="minimize" id="mpToggle" title="Collapse panel">−</button>
+      </div>
+      <div class="body" id="mpBody">
+        <div class="field">
+          <label for="mpUrl">WebSocket server</label>
+          <input id="mpUrl" spellcheck="false" autocomplete="off">
+        </div>
+        <div class="field">
+          <label for="mpRoom">Room</label>
+          <input id="mpRoom" maxlength="32" spellcheck="false" autocomplete="off">
+        </div>
+        <div class="buttons">
+          <button class="action" id="mpConnect">Connect</button>
+          <button class="action" id="mpJoin">Join</button>
+          <button class="action" id="mpDisconnect">Leave</button>
+        </div>
+        <div id="mpStatus" role="status">Disconnected</div>
+        <div class="stats"><span id="mpPlayers">0 players</span><span id="mpPing">Ping: —</span></div>
+        <canvas id="mpMap" width="236" height="126"></canvas>
+        <p class="hint">WASD sends test movement. Dots show network positions, not in-game models.</p>
+      </div>
+    </section>`;
+
+  const $ = (id) => shadow.getElementById(id);
+  const urlInput = $('mpUrl');
+  const roomInput = $('mpRoom');
+  const status = $('mpStatus');
+  const dot = $('mpDot');
+  const canvas = $('mpMap');
+  const ctx = canvas.getContext('2d');
+
+  urlInput.value = savedUrl;
+  roomInput.value = savedRoom;
+
+  function setStatus(message, state = 'disconnected') {
+    status.textContent = message;
+    dot.className = 'status-dot' + (state === 'disconnected' ? '' : ' ' + state);
+  }
+
+  function send(data) {
+    if (!socket || socket.readyState !== WebSocket.OPEN || socket.bufferedAmount > 65536) return;
+    socket.send(JSON.stringify(data));
+  }
+
+  function stopRetry() {
+    if (retryTimer !== null) clearTimeout(retryTimer);
+    retryTimer = null;
+  }
+
+  function scheduleRetry() {
+    if (!autoReconnect || retryTimer !== null) return;
+    const delay = retryDelay;
+    setStatus('Reconnecting in ' + Math.round(delay / 1000) + 's...');
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      connect();
+    }, delay);
+    retryDelay = Math.min(retryDelay * 2, 20000);
+  }
+
+  function connect() {
+    stopRetry();
+    autoReconnect = true;
+    retryDelay = Math.max(retryDelay, 1500);
+
+    let endpoint;
+    try {
+      endpoint = new URL(urlInput.value.trim());
+      if (!['ws:', 'wss:'].includes(endpoint.protocol)) throw new Error('Use ws:// or wss://');
+      if (endpoint.username || endpoint.password) throw new Error('Do not include credentials in URL');
+      if (location.protocol === 'https:' && endpoint.protocol !== 'wss:') {
+        setStatus('HTTPS game requires wss:// (TLS). Plain ws://:8085 is blocked.');
+        autoReconnect = false;
+        return;
+      }
+    } catch {
+      autoReconnect = false;
+      setStatus('Invalid WebSocket URL.');
+      return;
+    }
+
+    GM_setValue('clutcher_mp_url', endpoint.href);
+    GM_setValue('clutcher_mp_room', roomInput.value.trim());
+
+    if (socket) {
+      const old = socket;
+      socket = null;
+      old.close();
+    }
+
+    joinedRoom = null;
+    playerId = null;
+    players = [];
+    updateStats();
+    setStatus('Connecting to ' + endpoint.host + '...', 'connecting');
+
+    let ws;
+    try {
+      ws = new WebSocket(endpoint.href);
+    } catch (error) {
+      setStatus('Cannot open socket: ' + String(error.message || error));
+      scheduleRetry();
+      return;
+    }
+    socket = ws;
+
+    ws.addEventListener('open', () => {
+      if (socket !== ws) return;
+      retryDelay = 1500;
+      setStatus('Connected — joining room...', 'connected');
+      joinRoom();
+    });
+
+    ws.addEventListener('message', (event) => {
+      if (socket !== ws || typeof event.data !== 'string') return;
+      let message;
+      try { message = JSON.parse(event.data); } catch { return; }
+      switch (message.type) {
+        case 'welcome':
+          if (message.protocol_version !== PROTOCOL_VERSION) {
+            setStatus('Unsupported protocol: ' + message.protocol_version);
+            autoReconnect = false;
+            ws.close();
+            return;
+          }
+          playerId = message.id;
+          updateStats();
+          break;
+        case 'joined':
+          joinedRoom = message.room;
+          players = [];
+          setStatus('Joined room: ' + joinedRoom, 'connected');
+          updateStats();
+          break;
+        case 'snapshot':
+          if (message.room !== joinedRoom || !Array.isArray(message.players)) break;
+          players = message.players.filter((p) =>
+            typeof p.id === 'string' && Number.isFinite(p.x) && Number.isFinite(p.y)
+          ).slice(0, 16);
+          updateStats();
+          draw();
+          break;
+        case 'pong':
+          if (Number.isSafeInteger(message.nonce)) {
+            $('mpPing').textContent = 'Ping: ' + Math.max(0, Date.now() - message.nonce) + 'ms';
+          }
+          break;
+        case 'error':
+          setStatus('Server: ' + String(message.message || 'unknown error').slice(0, 140), 'connected');
+          break;
+      }
+    });
+
+    ws.addEventListener('error', () => {
+      if (socket === ws) setStatus('Connection failed. Check WSS/TLS and server address.');
+    });
+
+    ws.addEventListener('close', () => {
+      if (socket !== ws) return;
+      socket = null;
+      joinedRoom = null;
+      playerId = null;
+      players = [];
+      heldKeys.clear();
+      updateStats();
+      draw();
+      scheduleRetry();
+      if (!autoReconnect) setStatus('Disconnected');
+    });
+  }
+
+  function joinRoom() {
+    const room = roomInput.value.trim();
+    if (!/^[A-Za-z0-9_-]{1,32}$/.test(room)) {
+      setStatus('Room must be 1–32 letters, digits, - or _.');
+      return;
+    }
+    GM_setValue('clutcher_mp_room', room);
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      setStatus('Connect first.');
+      return;
+    }
+    joinedRoom = null;
+    players = [];
+    send({ type: 'join_room', room });
+  }
+
+  function disconnect() {
+    autoReconnect = false;
+    stopRetry();
+    heldKeys.clear();
+    if (socket) {
+      const old = socket;
+      socket = null;
+      old.close(1000, 'User disconnected');
+    }
+    joinedRoom = null;
+    playerId = null;
+    players = [];
+    updateStats();
+    draw();
+    setStatus('Disconnected');
+  }
+
+  function updateStats() {
+    $('mpPlayers').textContent = players.length + (players.length === 1 ? ' player' : ' players');
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#142134';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = '#29384a';
+    for (let x = 0; x < canvas.width; x += 20) {
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvas.height); ctx.stroke();
+    }
+    for (let y = 0; y < canvas.height; y += 20) {
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
+    }
+    const self = players.find((p) => p.id === playerId);
+    const centerX = self?.x ?? 0;
+    const centerY = self?.y ?? 0;
+    ctx.font = '10px system-ui';
+    for (const player of players) {
+      const x = canvas.width / 2 + (player.x - centerX) * 0.45;
+      const y = canvas.height / 2 + (player.y - centerY) * 0.45;
+      if (x < 4 || x > canvas.width - 4 || y < 4 || y > canvas.height - 4) continue;
+      const isSelf = player.id === playerId;
+      ctx.fillStyle = isSelf ? '#38bdf8' : '#fbbf24';
+      ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#cbd5e1';
+      ctx.fillText(isSelf ? 'You' : player.id.slice(0, 5), x + 7, y - 5);
+    }
+  }
+
+  function typingInField() {
+    const active = document.activeElement;
+    const shadowActive = shadow.activeElement;
+    return Boolean(
+      (active && (active.matches('input, textarea, select') || active.isContentEditable)) ||
+      (shadowActive && shadowActive.matches('input, textarea, select'))
+    );
+  }
+
+  window.addEventListener('keydown', (event) => {
+    if (typingInField() || event.ctrlKey || event.altKey || event.metaKey) {
+      heldKeys.clear();
+      return;
+    }
+    const key = event.key.toLowerCase();
+    if (['w', 'a', 's', 'd'].includes(key)) heldKeys.add(key);
+  }, true);
+
+  window.addEventListener('keyup', (event) => {
+    heldKeys.delete(event.key.toLowerCase());
+  }, true);
+
+  window.addEventListener('blur', () => heldKeys.clear());
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) heldKeys.clear();
+  });
+
+  setInterval(() => {
+    if (!joinedRoom || !socket || socket.readyState !== WebSocket.OPEN) return;
+    const enabled = document.hasFocus() && !typingInField() && !document.hidden;
+    send({
+      type: 'input',
+      x: enabled ? Number(heldKeys.has('d')) - Number(heldKeys.has('a')) : 0,
+      y: enabled ? Number(heldKeys.has('s')) - Number(heldKeys.has('w')) : 0
+    });
+  }, SEND_INTERVAL_MS);
+
+  setInterval(() => {
+    if (socket?.readyState === WebSocket.OPEN) {
+      send({ type: 'ping', nonce: Date.now() });
+    }
+  }, PING_INTERVAL_MS);
+
+  $('mpConnect').addEventListener('click', () => {
+    retryDelay = 1500;
+    connect();
+  });
+  $('mpJoin').addEventListener('click', joinRoom);
+  $('mpDisconnect').addEventListener('click', disconnect);
+  $('mpToggle').addEventListener('click', () => {
+    const collapsed = $('mpBody').classList.toggle('hidden');
+    $('mpToggle').textContent = collapsed ? '+' : '−';
+  });
+
+  draw();
+  setTimeout(connect, 700);
+})();

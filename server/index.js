@@ -7,7 +7,8 @@ import { World, TICK_HZ } from "./world.js";
 const HOST = process.env.HOST || "127.0.0.1";
 const PORT = Number(process.env.PORT ?? 8085);
 const PROTOCOL_VERSION = 1;
-const MAX_MESSAGES_PER_SECOND = 100;
+// Movement + multiple concurrent source-driven projectiles can exceed 100/s.
+const MAX_MESSAGES_PER_SECOND = 300;
 const MAX_BUFFERED_BYTES = 256 * 1024;
 const world = new World();
 const testPage = readFileSync(new URL("../client/test.html", import.meta.url));

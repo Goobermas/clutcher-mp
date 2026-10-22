@@ -1,6 +1,6 @@
 # Clutcher MP
 
-Fresh Node.js multiplayer server built from scratch for a browser-based game. **No Rust or Cargo required.** The v0.4 userscript loads Clutcher's real map with **0 bots**, **server-assigned CT/T teams**, and a **shared match clock and score**.
+Fresh Node.js multiplayer server built from scratch for a browser-based game. **No Rust or Cargo required.** The v0.5 userscript loads Clutcher's real map with **0 bots**, **server-assigned CT/T teams**, and a **shared match clock and score**.
 
 The networking v0.1 milestone is intentionally simple: two browser clients join the same room and see each other's movements on a canvas test page.
 
@@ -97,3 +97,26 @@ The small test page has a **Ready** button to simulate map loading and confirm t
 - `TODO.md` — milestones
 
 **Not implemented:** authoritative hits/health/damage, kills, C4 objectives, grenades, player auth, production hosting. Remote models and actions are *visual only* so far.
+
+
+## Cosmetic and animation replication (v0.5)
+
+This milestone aims to make remote players look like their actual browser players,
+not generic AI. The userscript reads the game's native `_carriedFinish()` and
+`_ownGloves()` APIs and replicates **currently equipped** weapon and knife
+finishes, skin names/kits, wear/float, seed, and gloves. Remote bot actors use
+the game's `_botSkin()` / `_botGloves()` selection and `setWeapon()` /
+`setGloves()` for materials. Non-default knives need a special
+`knife_<model>` override so the renderer does not revert to the default knife.
+
+The state stream carries crouch, motion/velocity, airborne, alive/dead,
+aim angle, weapon choice, scope, reload, fire, walk and melee *states*. Discrete
+animation events include draw/equip, inspect, reload timing and empty-mag
+status, clipout/clipin/bolt sounds, normal gunfire/tracers, knife stab/slash,
+jump/land, footsteps, scope changes, grenade throw gesture, death and respawn.
+
+**Known limits:** These are visual client-reported states, not server-validated
+combat or inventories. Sticker/charm rendering, full 3D grenade objects,
+game-specific clip availability and exact animation parity across all weapons
+are not verified. Some third-person assets have no matching first-person
+inspect clip. The script has no live end-to-end multiplayer test yet.

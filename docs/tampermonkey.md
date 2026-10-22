@@ -1,6 +1,6 @@
 # Tampermonkey client — v0.1
 
-Install `client/clutcher-mp.user.js` into Tampermonkey and open `https://clutcher.io/` (or a supported subdomain).
+Install `client/clutcher-mp.user.js` into Tampermonkey and open either `http://clutcher.io/` or `https://clutcher.io/` (including subdomains).
 
 The script adds a small **Clutcher MP** HUD with:
 
@@ -10,16 +10,16 @@ The script adds a small **Clutcher MP** HUD with:
 - Minimap showing **network prototype positions** for players in the same room
 - Persistent endpoint and room settings via Tampermonkey
 
-## Server address / HTTPS gotcha
+## Existing reverse proxy / HTTP and HTTPS game URLs
 
-The script starts with `wss://mp.sillyhack.com:8085/ws`, based on the requested server name and port.
+Your existing reverse proxy exposes `wss://mp.sillyhack.com/ws` (standard public TLS port 443). The Node.js multiplayer server continues to listen on `http://127.0.0.1:8085`, so **no new external port is needed** if your existing proxy still forwards the WebSocket path correctly.
 
-**This will not work against a plain `ws://` Node.js server until TLS is configured.** Clutcher is an HTTPS site, and the browser blocks insecure `ws://` connections. Use either:
+- Userscript matches both `http://clutcher.io/*` and `https://clutcher.io/*`, including `www` and other subdomains.
+- The public WebSocket URL uses **WSS on both HTTP and HTTPS pages** for consistent behavior.
+- The client migrates the previous default `wss://mp.sillyhack.com:8085/ws` to `wss://mp.sillyhack.com/ws` without changing custom URLs.
+- The backend still uses `/ws`; the old multiplayer script used the same path, but **its messages are not interchangeable**. The new Node server expects `join_room`, not legacy `join`/`serverId`; it has no legacy `/servers` discovery API.
 
-1. Terminate TLS for **port 8085** using a valid certificate for `mp.sillyhack.com` and forward to the Node.js server; use `wss://mp.sillyhack.com:8085/ws`. This requires a TLS proxy or HTTPS-enabled backend, not just switching the protocol text.
-2. Preferably, front the existing HTTP/WebSocket service (localhost:8085) with a TLS-enabled reverse proxy or Cloudflare Tunnel on standard port **443**; enter `wss://mp.sillyhack.com/ws` into the HUD. This normally avoids opening any *new* application ports.
-
-If `mp.sillyhack.com` is orange-cloud proxied on Cloudflare DNS, **8085 isn't on Cloudflare's supported proxy port list**. Use WSS through 443 or a supported HTTPS port instead.
+If the client fails to connect, verify that the existing reverse proxy forwards the WebSocket upgrade headers and that `mp.sillyhack.com` has a valid TLS certificate. Do not replace the WSS URL with plain `ws://` on an HTTPS page.
 
 ## Current limitations
 
@@ -29,7 +29,7 @@ The browser may additionally block WebSockets via the game's Content Security Po
 
 ## Verify
 
-1. Run Node.js server on VPS (`HOST=127.0.0.1 PORT=8085 npm start`, behind your secure proxy).
+1. Run Node.js server on VPS (`HOST=127.0.0.1 PORT=8085 npm start`, behind your existing reverse proxy).
 2. Confirm the TLS endpoint works and presents a valid certificate.
 3. Install script in two browser sessions, both joining `lobby`.
 4. Press WASD in one game tab; watch its dot move in the other tab's HUD.

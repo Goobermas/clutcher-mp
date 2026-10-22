@@ -117,6 +117,14 @@ wss.on("connection", (socket) => {
           world.setReady(session, data.ready);
           send(socket, world.matchState(session.roomId));
           break;
+        case "player_state":
+          world.setPlayerState(session, data);
+          break;
+        case "action": {
+          const { recipients, message } = world.relayAction(session, data);
+          for (const peer of recipients) send(peer, message);
+          break;
+        }
         case "ping":
           if (!Number.isSafeInteger(data.nonce) || data.nonce < 0) {
             throw new Error("Invalid ping nonce.");

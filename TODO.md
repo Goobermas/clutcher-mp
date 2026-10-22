@@ -33,6 +33,9 @@
 
 ## Phase 3 — Real Clutcher client
 
+- [x] Add a Tampermonkey connection/testing HUD for rooms, 2D movement, and snapshots (not game-integrated).
+- [ ] Configure a secure WSS endpoint for the HTTPS game page.
+
 - [ ] Identify legal/usable game-client integration points.
 - [ ] Write new client networking adapter for protocol v1.
 - [ ] Sync player model spawning, removal, animations and transforms.

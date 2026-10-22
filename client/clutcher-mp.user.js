@@ -534,21 +534,29 @@
   }
 
   function playDeferredActions(bot) {
-    if (!bot?.cs2Agent?.loco || !bot._clutcherMpRemote) return;
+    if (!bot?._clutcherMpRemote) return;
     const list = deferredActions.get(bot._clutcherMpRemote);
     if (!list?.length) return;
-    deferredActions.delete(bot._clutcherMpRemote);
-    for (const item of list) {
-      if (item.expiration > performance.now()) remoteAction(item.message, false);
+    const live = list.filter(item => item.expiration > performance.now());
+    if (!live.length) {
+      deferredActions.delete(bot._clutcherMpRemote);
+      return;
     }
+    // Rig and held weapon are loaded asynchronously by the game.
+    if (!bot.cs2Agent?.loco || !bot.cs2Agent?.heldWeapon) {
+      deferredActions.set(bot._clutcherMpRemote, live);
+      return;
+    }
+    deferredActions.delete(bot._clutcherMpRemote);
+    for (const item of live) remoteAction(item.message, false);
   }
 
   function remoteAction(message, allowDeferred = true) {
     const bot = remoteModels.get(message.id);
     const game = gameInstance();
     if (!game) return;
-    if ((!bot || !bot.cs2Agent?.loco) && allowDeferred &&
-        ['reload','inspect','equip'].includes(message.kind)) {
+    if ((!bot || !bot.cs2Agent?.loco || !bot.cs2Agent?.heldWeapon) &&
+        allowDeferred && ['reload','inspect','equip'].includes(message.kind)) {
       deferRemoteAction(bot, message);
       return;
     }

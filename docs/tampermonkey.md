@@ -37,13 +37,19 @@ The new Tampermonkey userscript reads the actual game entry points from the supp
 
 The Node server is the authority for `match_state` messages at 4 Hz. The userscript displays the CT/T score, match phase, round, and clock in its panel and mirrors the timer/round/score to the native game HUD when available. Clutcher's local round-ending logic is disabled while the multiplayer match is active to prevent singleplayer Defusal from overruling the server.
 
-The server starts a five-second countdown **only when one CT and one T have both clicked Play and completed loading**. Each round is ten minutes; a Defusal timeout awards CT one point, then the next round starts after five seconds. Returning to menu or disconnecting pauses the match until both sides are ready again.
+The server starts a five-second countdown **only when one CT and one T have both clicked Play and completed loading**. Defusal has 115.2-second rounds, five-second freezes and first to eight rounds out of 15; TDM has ten-minute matches and six-second results. A Defusal timeout currently awards CT one point because bomb interactions are not networked. Returning to menu or disconnecting pauses the match until both sides are ready again.
 
-**Not implemented:** remote combat, legitimate TDM kill scoring, C4 interactions, T victories, and native 3D player synchronization. Full round scoring can only be implemented after these gameplay messages exist.
+**Not implemented:** authoritative combat/damage, legitimate TDM kill scoring, C4 interactions and T victories. Real 3D location and action *visuals* are now synchronized. Full round scoring can only be implemented after these gameplay messages exist.
+
+## Remote-player models and actions (v0.4)
+
+On the actual map, Clutcher MP now places other players into the bot model renderer. These aren't AI opponents—the script overrides each remote bot's autonomous update so it follows incoming coordinates and rotations, with crouching, jumping, currently held weapon, shooting tracers, and reload animations.
+
+The server relays `player_state` packets with the browser's real 3D coordinates and `player_action` events for gunshots/reloads/jumps/landings. When another client leaves, its remote model is removed. If you're alone there will be **zero** bots: no opponents and no AI.
+
+This is a **visual networking prototype**. Hits, health, kills, weapons firing logic, collision reconciliation and C4 are not yet server-authoritative. The view/model APIs were inspected from the supplied obfuscated game bundle and older client reference; live-game compatibility remains unverified.
 
 ## Current limitations
-
-This is a **networking bridge/prototype**, not a full in-game multiplayer modification. It does *not* spawn game characters, read the game's real coordinates, or synchronize weapons/combat. The server itself only understands 2D test movement (`input: {x, y}`) and publishes simple 2D snapshots. Real gameplay integration needs a new mapping between actual game state and an expanded multiplayer protocol.
 
 The browser may additionally block WebSockets via the game's Content Security Policy. Check browser DevTools if WSS and TLS are correct but it still fails. Do not disable browser security.
 
@@ -52,4 +58,4 @@ The browser may additionally block WebSockets via the game's Content Security Po
 1. Run Node.js server on VPS (`HOST=127.0.0.1 PORT=8085 npm start`, behind your existing reverse proxy).
 2. Confirm the TLS endpoint works and presents a valid certificate.
 3. Install script in two browser sessions, both joining `lobby`.
-4. Press WASD in one game tab; watch its dot move in the other tab's HUD.
+4. Press Play in both Clutcher tabs. Verify the other's AI-disabled character model moves at the same coordinates, turns, crouches and shows firing/reload animations.

@@ -47,6 +47,12 @@ ssh -L 8085:127.0.0.1:8085 ubuntu@YOUR_VPS_IP
 
 If you use that tunnel, leave the server's `HOST` at `127.0.0.1`, and open `http://127.0.0.1:8085` on your own computer. **Warning:** direct public access exposes an unauthenticated, unencrypted development server. Prefer the SSH tunnel until HTTPS/WSS and access controls are configured. If something is already listening on port 8085, stop it or choose another port.
 
+## Tampermonkey prototype client
+
+Install [client/clutcher-mp.user.js](client/clutcher-mp.user.js) into Tampermonkey to connect from the Clutcher HTTPS game page. The userscript has a room/connection HUD and an independent player-position minimap. This is **not yet real in-game player synchronization**.
+
+**WSS required:** The script targets `wss://mp.sillyhack.com:8085/ws`, but the default Node server speaks unencrypted `ws://`. Set up trusted TLS on that port or put a WSS reverse proxy / Cloudflare Tunnel on 443 and change the script's endpoint to `wss://mp.sillyhack.com/ws`. See [setup and limitations](docs/tampermonkey.md).
+
 ## Development
 
 ```bash

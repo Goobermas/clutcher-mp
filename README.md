@@ -23,29 +23,29 @@ npm install
 npm start
 ```
 
-By default the server listens on `http://127.0.0.1:3000`.
+By default the server listens on `http://127.0.0.1:8085`.
 
 Open it in **two browser tabs**. Click **Connect** and **Join room** in both tabs (room name `lobby`), then use **WASD** in either tab. Your player is blue and other players are yellow.
 
-WebSocket endpoint: `ws://127.0.0.1:3000/ws`
+WebSocket endpoint: `ws://127.0.0.1:8085/ws`
 
-Health endpoint: `http://127.0.0.1:3000/health`
+Health endpoint: `http://127.0.0.1:8085/health`
 
 ## Running on a VPS
 
-For access beyond the VPS itself, bind to all network interfaces:
+If port 8085 is already allowed through the VPS network/firewall and you want to connect directly from another machine, bind to all network interfaces:
 
 ```bash
-HOST=0.0.0.0 PORT=3000 npm start
+HOST=0.0.0.0 PORT=8085 npm start
 ```
 
 Then use an SSH tunnel for safe initial testing from your own computer:
 
 ```bash
-ssh -L 3000:127.0.0.1:3000 ubuntu@YOUR_VPS_IP
+ssh -L 8085:127.0.0.1:8085 ubuntu@YOUR_VPS_IP
 ```
 
-If you use that tunnel, leave the server's `HOST` at `127.0.0.1`, and open `http://127.0.0.1:3000` on your own computer. Avoid exposing port 3000 to the internet at this prototype stage: there is no authentication or encryption. Configure a reverse proxy with HTTPS/WSS and access controls before public deployment.
+If you use that tunnel, leave the server's `HOST` at `127.0.0.1`, and open `http://127.0.0.1:8085` on your own computer. **Warning:** direct public access exposes an unauthenticated, unencrypted development server. Prefer the SSH tunnel until HTTPS/WSS and access controls are configured. If something is already listening on port 8085, stop it or choose another port.
 
 ## Development
 

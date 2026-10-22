@@ -627,20 +627,33 @@
   }
 
   function installActionHooks(game) {
-    if (!game || game.__clutcherMpActions) return;
+    if (!game) return;
+    const oldHooks = game.__clutcherMpHookRefs;
+    if (oldHooks?.weapons === game.weapons &&
+        oldHooks?.viewmodel === game.viewmodel &&
+        oldHooks?.audio === game.audio) return;
+    game.__clutcherMpHookRefs = {
+      weapons:game.weapons,viewmodel:game.viewmodel,audio:game.audio
+    };
     game.__clutcherMpActions = true;
     installCosmeticHooks(game);
 
-    function wrap(obj, method, listener) {
-      if (typeof obj?.[method] !== 'function') return;
+    function wrap(obj, method, listener, after = false) {
+      if (typeof obj?.[method] !== 'function' || obj[method].__mpActionWrapped) return;
       const original = obj[method];
-      obj[method] = function(...args) {
-        // Observe local actions; preserve original game behavior.
-        try { listener(args, this); } catch (error) {
-          console.debug('[Clutcher MP] Action observation:', method, error);
-        }
-        return original.apply(this, args);
+      const hooked = function(...args) {
+        const observe = () => {
+          try { listener(args, this); } catch (error) {
+            console.debug('[Clutcher MP] Action observation:', method, error);
+          }
+        };
+        if (!after) observe();
+        const result = original.apply(this, args);
+        if (after) observe();
+        return result;
       };
+      hooked.__mpActionWrapped = true;
+      obj[method] = hooked;
     }
 
     wrap(game, 'fireBullet', ([shooter, x, y, z, dx, dy, dz]) => {
@@ -656,21 +669,23 @@
       sendVisualAction('knife', {heavy:!!heavy});
     });
 
-    wrap(game.weapons, 'reload', () => {
-      const def = game.weapons?.def?.();
-      const state = game.weapons?.state?.();
+    // The game's actual reload entry point is weapons.startReload(), NOT
+    // weapons.reload(). Observe after native logic confirms the reload.
+    wrap(game.weapons, 'startReload', () => {
+      const weapons = game.weapons;
+      if (!weapons?.reloading) return;
+      const def = weapons.def?.();
+      const state = weapons.state?.();
       const per = Math.max(0.1, Number(def?.reload) || 2.5);
       const shells = def?.shellReload
         ? Math.max(1, Math.min(Number(def?.mag || 1) - Number(state?.ammo || 0),
-            Number(state?.reserve || 1)))
-        : 1;
-      const duration = Math.min(30, per * shells);
+          Number(state?.reserve || 1))) : 1;
       sendVisualAction('reload', {
-        duration,
-        empty: Number(state?.ammo) <= 0,
-        weapon:game.weapons?.current || 'knife'
+        duration:Math.min(30,per*shells),
+        empty:Number(state?.ammo) <= 0,
+        weapon:weapons.current || 'knife'
       });
-    });
+    }, true);
 
     wrap(game.weapons, 'setWeapon', ([weapon]) => {
       if (typeof weapon === 'string') sendVisualAction('equip', {weapon});
@@ -686,9 +701,13 @@
 
     // Native inspect is performed by the first-person viewmodel. The
     // third-person bot renderer may not have a matching clip for every gun.
+    // Native inspect is initiated by game.weapons.update(), which directly
+    // calls game.viewmodel.inspect() (and, if present, game.cs2.inspect()).
+    // Observe the call AFTER it reaches the viewmodel, not an imagined
+    // weapons.inspect() API.
     wrap(game.viewmodel, 'inspect', () => {
-      sendVisualAction('inspect', {weapon:game.weapons?.current || 'knife'});
-    });
+      sendVisualAction('inspect',{weapon:game.weapons?.current || 'knife'});
+    }, true);
 
     if (typeof game.dealDamage === 'function') {
       const original = game.dealDamage;

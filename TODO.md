@@ -34,7 +34,9 @@
 ## Phase 3 — Real Clutcher client
 
 - [x] Add a Tampermonkey connection/testing HUD for rooms, 2D movement, and snapshots (not game-integrated).
-- [ ] Configure a secure WSS endpoint for the HTTPS game page.
+- [x] Configure the userscript for the existing WSS proxy endpoint on port 443 (backend on 8085).
+- [x] Match both HTTP and HTTPS Clutcher game pages.
+- [ ] Verify that the existing reverse proxy works with the new Node.js server and client.
 
 - [ ] Identify legal/usable game-client integration points.
 - [ ] Write new client networking adapter for protocol v1.

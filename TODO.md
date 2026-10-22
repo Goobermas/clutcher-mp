@@ -52,6 +52,18 @@
 
 ## Phase 4 — Gameplay
 
+- [x] Replicate equipped weapon/knife skins, kit, wear and seed.
+- [x] Replicate glove models and glove paint/float data.
+- [x] Handle non-default knives through the agent's world-model API.
+- [x] Relay inspect, draw, reload stages, empty-mag reload, knife attack, shot, step, landing, scope, grenade gesture, death and respawn.
+- [x] Filter cosmetic payload keys, cap strings/nesting, and validate animation types server-side.
+- [x] Add cosmetic and animation unit tests.
+- [ ] Verify *every* gun and knife skin against the live game render pipeline.
+- [ ] Verify first/third-person inspect, reload, crouch, walk, firing and weapon swap clips in two browsers.
+- [ ] Evaluate sticker/charm visibility and agent outfit customization if supported by the game assets.
+- [ ] Implement actual grenade objects and objective action replication.
+
+
 - [x] Match the native game mode timings: Defusal 5s freeze, 115.2s rounds, 8/15 target; TDM 600s and 6s result period.
 - [x] Add remote human players as AI-disabled Clutcher bot models, synchronized to real 3D coordinates.
 - [x] Relay validated player transform, crouch, airborne and weapon state.

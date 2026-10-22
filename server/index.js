@@ -5,7 +5,7 @@ import { WebSocket, WebSocketServer } from "ws";
 import { World, TICK_HZ } from "./world.js";
 
 const HOST = process.env.HOST || "127.0.0.1";
-const PORT = Number(process.env.PORT ?? 3000);
+const PORT = Number(process.env.PORT ?? 8085);
 const PROTOCOL_VERSION = 1;
 const MAX_MESSAGES_PER_SECOND = 100;
 const MAX_BUFFERED_BYTES = 256 * 1024;

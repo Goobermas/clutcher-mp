@@ -84,3 +84,44 @@ test("the only player may change map before Play, but not once another has joine
   assert.deepEqual(world.join(a, "lobby", {}, { map: "oasis", mode: "defusal" }),
     { team: "CT", map: "dusker", mode: "dm" });
 });
+
+test("3D player state appears for peers, actions relay to everyone except the actor", () => {
+  const world = new World();
+  const a = { id: "a", roomId: null };
+  const b = { id: "b", roomId: null };
+  const socketA = { id: 1 };
+  const socketB = { id: 2 };
+  world.join(a, "map", socketA);
+  world.join(b, "map", socketB);
+  assert.throws(() => world.setPlayerState(a, {}), /Load the game/);
+  world.setReady(a, true);
+  world.setReady(b, true);
+  const state = {
+    x: 10, y: 2, z: 15, yaw: 0.5, pitch: 0.1,
+    vx: 1, vz: 0, crouch: true, airborne: false,
+    weapon: "ak47", alive: true, name: "Example"
+  };
+  world.setPlayerState(a, state);
+  const players = world.tick()[0].message.players;
+  assert.equal(players.find(p => p.id === "a").game.weapon, "ak47");
+  assert.equal(players.find(p => p.id === "a").game.z, 15);
+  assert.equal(players.find(p => p.id === "b").game, undefined);
+  const action = world.relayAction(a, { kind: "fire", dir: [0, 0, -1] });
+  assert.deepEqual(action.recipients, [socketB]);
+  assert.deepEqual(action.message, { type: "player_action", id: "a", kind: "fire", dir: [0,0,-1] });
+  world.setReady(a, false);
+  assert.equal(world.tick()[0].message.players.find(p => p.id === "a").game, undefined);
+});
+
+test("invalid transforms and remote actions are rejected", () => {
+  const world = new World();
+  const a = { id: "a", roomId: null };
+  world.join(a, "lobby", {});
+  world.setReady(a, true);
+  const base = { x:0,y:0,z:0,yaw:0,pitch:0,vx:0,vz:0,alive:true,weapon:"ak47" };
+  assert.throws(() => world.setPlayerState(a, { ...base, x: Infinity }), /finite/);
+  assert.throws(() => world.setPlayerState(a, { ...base, x: 5000 }), /bounds/);
+  world.setPlayerState(a, base);
+  assert.throws(() => world.relayAction(a, {kind:"plant"}), /Unsupported/);
+  assert.throws(() => world.relayAction(a, {kind:"fire", dir:[100,0,0]}), /Invalid shot/);
+});

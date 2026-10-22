@@ -37,6 +37,44 @@ export class RoomMatch {
       defuser:null, defuseStart:null, defuseSeen:0, placed:null};
   }
 
+  assignCarrier(room) {
+    if (this.mode !== "defusal" || this.objective.placed) return;
+    const o=this.objective;
+    const incumbent=room.get(o.carrier);
+    if (incumbent?.ready && incumbent.gameState?.alive && incumbent.team==="T") return;
+    o.carrier=[...room.values()].find(p=>p.ready && p.team==="T" && p.gameState?.alive)?.id || null;
+  }
+
+  objectiveIntent(player,kind,now,room,map) {
+    const o=this.objective;
+    const p=player?.gameState;
+    if (!p?.alive || !player.ready || this.mode!=="defusal") return false;
+    if (Math.hypot(p.vx,p.vz)>.35 || p.airborne) return false;
+    if (kind==="plant") {
+      if (this.phase!=="live" || player.team!=="T" || o.carrier!==player.id) return false;
+      const site=siteForPosition(map,p);
+      if (!site) return false;
+      if (o.planter!==player.id || o.site!==site) {
+        o.planter=player.id;
+        o.site=site;
+        o.plantStart=now;
+      }
+      o.plantSeen=now;
+      return true;
+    }
+    if (kind==="defuse") {
+      if (this.phase!=="planted" || player.team!=="CT" || !o.placed) return false;
+      if (Math.hypot(p.x-o.placed.x,p.z-o.placed.z)>1.8 ||
+          Math.abs(p.y-o.placed.y)>2.5) return false;
+      if (o.defuser!==player.id) {
+        o.defuser=player.id; o.defuseStart=now;
+      }
+      o.defuseSeen=now;
+      return true;
+    }
+    return false;
+  }
+
   get rules() { return RULES[this.mode] ?? RULES.defusal; }
 
   transition(phase, endsAt = null) {

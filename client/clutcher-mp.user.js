@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Clutcher MP - Multiplayer Bridge
 // @namespace    https://sillyhack.com/
-// @version      0.5.2
+// @version      0.6.0
 // @description  New Clutcher multiplayer WebSocket client (networking prototype)
 // @author       SillyHack
 // @match        *://clutcher.io/*
@@ -53,6 +53,13 @@
   let retryDelay = 1500;
   const heldKeys = new Set();
   const remoteModels = new Map();
+  const localProjectiles=new Map();
+  const remoteProjectiles=new Map();
+  let grenadeSerial=0;
+  let previousGrenadeManager=null;
+  let lastObjectivePulse=0;
+  let lastBombSignature=null;
+
   const deferredActions = new Map();
   let remoteConstructor = null;
   let lastGrounded = true;

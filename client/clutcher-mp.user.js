@@ -1043,6 +1043,7 @@
     matchDeadline = 0;
     isReady = false;
     lastPhaseSignature = '';
+    lastBombSignature = null;
     $('mpClock').textContent = '—:——';
     $('mpCT').textContent = 'CT 0';
     $('mpT').textContent = '0 T';
@@ -1107,7 +1108,7 @@
 
   function applyMatchState(message) {
     if (!joinedRoom || message.room !== joinedRoom) return;
-    if (!['waiting','countdown','live','ended','match_end'].includes(message.phase)) return;
+    if (!['waiting','countdown','live','planted','ended','match_end'].includes(message.phase)) return;
     if (!message.score || !Number.isFinite(message.remainingMs) ||
         !Number.isFinite(message.round) || !Number.isFinite(message.roundSeconds) ||
         !Number.isFinite(message.score.CT) || !Number.isFinite(message.score.T)) return;
@@ -1117,7 +1118,18 @@
     const previousRevision = matchState?.revision;
     const previousRound = matchState?.round;
     const previousPhase = matchState?.phase;
+    const previousObjective = matchState?.objective;
     matchState = message;
+    if(previousPhase==='planted' && message.phase==='ended') {
+      const pos=previousObjective?.placed;
+      if(pos && gameInstance()?.state==='playing') {
+        const game=gameInstance();
+        if(message.winner==='T') {
+          game.effects?.explosion?.(pos.x,pos.y+.3,pos.z);
+          game.audio?.play?.('explosion',{pos});
+        } else if(message.winner==='CT')game.audio?.play?.('defused',{pos});
+      }
+    }
     // Native Defusal round logic is intentionally suspended, so honor the
     // server's next-round spawn transition here instead of locally advancing.
     const game = gameInstance();
@@ -1186,7 +1198,9 @@
       ctl._endClock = ctl.endT;
       ctl.state = ['countdown', 'waiting'].includes(matchState.phase)
         ? 'freeze' : matchState.phase === 'match_end' ? 'match_end' :
-          matchState.phase === 'ended' ? 'end' : 'live';
+          matchState.phase === 'ended' ? 'end' :
+          matchState.phase === 'planted' ? 'planted' : 'live';
+      updateObjectiveVisual(game,matchState);
     }
 
     // Not every native HUD mode exposes team scores yet, so maintain the

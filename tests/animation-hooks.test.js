@@ -59,7 +59,7 @@ test("inspect falls back to animating held weapon when no third-person clip exis
   let now = 1000;
   const methods = new Function("performance", "deferredActions", "remoteAction",
     section("  function stopRemoteInspect(bot) {", "  function remoteAction(message") +
-    "\nreturn {startRemoteInspect, animateRemoteInspect, stopRemoteInspect};"
+    "\nreturn {startRemoteInspect, startRemoteReloadFallback, animateRemoteInspect, stopRemoteInspect};"
   )({ now: () => now }, new Map(), () => {});
 
   function vector(x,y,z) {
@@ -80,6 +80,16 @@ test("inspect falls back to animating held weapon when no third-person clip exis
   assert.equal(heldWeapon.rotation.y, 0,
     "Weapon pose restores after inspection");
   assert.equal(bot._mpInspect, null);
+
+  // Reload has its own fallback when no third-person reload clip is bundled.
+  now = 5000;
+  assert.equal(methods.startRemoteReloadFallback(bot, 2), true);
+  now = 6000;
+  methods.animateRemoteInspect(bot);
+  assert.ok(Math.abs(heldWeapon.position.y) > 0.01, "Fallback visibly lowers weapon");
+  now = 7200;
+  methods.animateRemoteInspect(bot);
+  assert.equal(heldWeapon.position.y, 0);
 });
 
 test("native third-person reload action uses the bot renderer's weapon id", () => {

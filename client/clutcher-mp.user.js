@@ -496,7 +496,28 @@
     // monotonic timer. No local client is allowed to set a score.
     const previousRevision = matchState?.revision;
     const previousRound = matchState?.round;
+    const previousPhase = matchState?.phase;
     matchState = message;
+    // Native Defusal round logic is intentionally suspended, so honor the
+    // server's next-round spawn transition here instead of locally advancing.
+    const game = gameInstance();
+    if (game?.state === 'playing') {
+      const newDefusalRound = assignedMode === 'defusal' &&
+        message.phase === 'countdown' &&
+        (message.round !== previousRound || previousPhase === 'match_end') &&
+        previousPhase && previousPhase !== 'waiting';
+      const newDmMatch = assignedMode === 'dm' &&
+        previousPhase === 'ended' && message.phase === 'live';
+      if (newDefusalRound || newDmMatch) {
+        try {
+          game.respawnPlayer?.();
+          game.hud?.hideDeath?.();
+          game.hud?.updateHealth?.();
+        } catch (error) {
+          console.warn('[Clutcher MP] Server round spawn failed:', error);
+        }
+      }
+    }
     matchDeadline = performance.now() + Math.max(0, message.remainingMs);
     const phaseSignature = message.phase + ':' + message.round + ':' +
       message.score.CT + ':' + message.score.T;

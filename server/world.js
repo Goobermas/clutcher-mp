@@ -1,3 +1,5 @@
+import { RoomMatch } from "./match.js";
+
 export const TICK_HZ = 20;
 export const MOVE_SPEED = 120;
 export const MAX_PLAYERS_PER_ROOM = 16;
@@ -34,6 +36,7 @@ export class World {
   constructor() {
     this.rooms = new Map();
     this.roomSettings = new Map();
+    this.roomMatches = new Map();
     this.tickNumber = 0;
   }
 
@@ -49,7 +52,11 @@ export class World {
         // Once another player joins, the room's settings are locked.
         if (this.rooms.get(roomId).size === 1) {
           if (MAPS.includes(options?.map)) settings.map = options.map;
-          if (MODES.includes(options?.mode)) settings.mode = options.mode;
+          if (MODES.includes(options?.mode)) {
+            settings.mode = options.mode;
+            const match = this.roomMatches.get(roomId);
+            if (match?.phase === "waiting") match.mode = settings.mode;
+          }
         }
         return { ...settings, team: player.team };
       }
@@ -74,6 +81,7 @@ export class World {
     if (!this.rooms.has(roomId)) {
       this.rooms.set(roomId, room);
       this.roomSettings.set(roomId, { map, mode });
+      this.roomMatches.set(roomId, new RoomMatch(mode));
     }
     const team = balancedTeam(room);
     room.set(session.id, {
@@ -83,7 +91,8 @@ export class World {
       x: room.size * 30,
       y: 0,
       inputX: 0,
-      inputY: 0
+      inputY: 0,
+      ready: false
     });
     session.roomId = roomId;
     session.team = team;
@@ -98,10 +107,35 @@ export class World {
       if (room.size === 0) {
         this.rooms.delete(session.roomId);
         this.roomSettings.delete(session.roomId);
+        this.roomMatches.delete(session.roomId);
       }
     }
     session.roomId = null;
     session.team = null;
+  }
+
+  setReady(session, ready) {
+    if (typeof ready !== "boolean") throw new Error("Ready must be true or false.");
+    const player = this.rooms.get(session.roomId)?.get(session.id);
+    if (!player) throw new Error("Join a room before readying.");
+    player.ready = ready;
+  }
+
+  matchState(roomId, now = performance.now()) {
+    const room = this.rooms.get(roomId);
+    const match = this.roomMatches.get(roomId);
+    if (!room || !match) return null;
+    const readyCT = [...room.values()].some(player => player.team === "CT" && player.ready);
+    const readyT = [...room.values()].some(player => player.team === "T" && player.ready);
+    match.advance(now, readyCT && readyT);
+    return match.snapshot(roomId, room, now);
+  }
+
+  matchStates(now = performance.now()) {
+    return [...this.rooms].map(([roomId, room]) => ({
+      recipients: [...room.values()].map(player => player.socket),
+      message: this.matchState(roomId, now)
+    }));
   }
 
   setInput(session, x, y) {

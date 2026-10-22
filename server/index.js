@@ -107,10 +107,15 @@ wss.on("connection", (socket) => {
             map: assignment.map,
             mode: assignment.mode
           });
+          send(socket, world.matchState(session.roomId));
           break;
         }
         case "input":
           world.setInput(session, data.x, data.y);
+          break;
+        case "ready":
+          world.setReady(session, data.ready);
+          send(socket, world.matchState(session.roomId));
           break;
         case "ping":
           if (!Number.isSafeInteger(data.nonce) || data.nonce < 0) {
@@ -141,6 +146,14 @@ const tickInterval = setInterval(() => {
   }
 }, 1000 / TICK_HZ);
 
+// Independent 4 Hz room clock updates. Every client receives the same
+// remaining time, round number, and CT/T score from the server.
+const matchInterval = setInterval(() => {
+  for (const { recipients, message } of world.matchStates()) {
+    for (const socket of recipients) send(socket, message);
+  }
+}, 250);
+
 const heartbeatInterval = setInterval(() => {
   for (const socket of wss.clients) {
     if (!socket.isAlive) {
@@ -155,6 +168,7 @@ const heartbeatInterval = setInterval(() => {
 function shutdown() {
   console.log("Shutting down...");
   clearInterval(tickInterval);
+  clearInterval(matchInterval);
   clearInterval(heartbeatInterval);
   for (const socket of wss.clients) socket.terminate();
   wss.close();

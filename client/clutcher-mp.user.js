@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Clutcher MP - Multiplayer Bridge
 // @namespace    https://sillyhack.com/
-// @version      0.5.1
+// @version      0.5.2
 // @description  New Clutcher multiplayer WebSocket client (networking prototype)
 // @author       SillyHack
 // @match        *://clutcher.io/*
@@ -393,7 +393,7 @@
         // The real game renderer animates the character body, gun and shadow.
         this._updateCS2Body?.(dt, game);
         playDeferredActions(this);
-        animateRemoteInspect(this);
+        animateRemoteReloadFallback(this);
         applyKnifeModel(this, next);
         this.shadow?.position?.set?.(this.x, this.y + 0.02, this.z);
       };
@@ -454,76 +454,48 @@
 
 
 
-  // Native third-person assets don't necessarily contain a dedicated inspect
-  // action. Use a real action clip when one exists, otherwise animate the
-  // visible held weapon without disturbing game-owned bone animation.
-  function stopRemoteInspect(bot) {
-    const inspect = bot?._mpInspect;
-    if (!inspect) return;
-    if (inspect.mesh) {
-      inspect.mesh.rotation.set(inspect.rotation.x,inspect.rotation.y,inspect.rotation.z);
-      inspect.mesh.position.set(inspect.position.x,inspect.position.y,inspect.position.z);
+  // Visible reload fallback only for third-person assets lacking a reload clip.
+  // Local inspect stays entirely native; it is never networked.
+  function stopRemoteReloadFallback(bot) {
+    const pose = bot?._mpReloadPose;
+    if (!pose) return;
+    if (pose.mesh) {
+      pose.mesh.rotation.set(pose.rotation.x, pose.rotation.y, pose.rotation.z);
+      pose.mesh.position.set(pose.position.x, pose.position.y, pose.position.z);
     }
-    bot._mpInspect = null;
-  }
-
-  function startRemoteInspect(bot) {
-    const agent = bot?.cs2Agent;
-    if (!agent?.loco) return false;
-    const loco = agent.loco;
-    const weapon = agent._weaponId || bot.weapon;
-    const clip = loco.actionName?.('inspect', weapon, {crouched:!!bot.crouchT}) ||
-      (loco.hasAction?.('inspect') ? 'inspect' : null);
-    if (clip && loco.playAction?.(clip)) return true;
-    const mesh = agent.heldWeapon;
-    if (!mesh?.rotation || !mesh?.position) return false;
-    stopRemoteInspect(bot);
-    bot._mpInspect = {
-      mesh, kind:'inspect', start:performance.now(), duration:2400,
-      rotation:{x:mesh.rotation.x,y:mesh.rotation.y,z:mesh.rotation.z},
-      position:{x:mesh.position.x,y:mesh.position.y,z:mesh.position.z}
-    };
-    return true;
+    bot._mpReloadPose = null;
   }
 
   function startRemoteReloadFallback(bot, duration) {
     const mesh = bot?.cs2Agent?.heldWeapon;
     if (!mesh?.rotation || !mesh?.position) return false;
-    stopRemoteInspect(bot);
-    bot._mpInspect = {
-      mesh, kind:'reload', start:performance.now(),
-      duration:Math.min(15000,Math.max(600,Number(duration || 2.5)*1000)),
-      rotation:{x:mesh.rotation.x,y:mesh.rotation.y,z:mesh.rotation.z},
-      position:{x:mesh.position.x,y:mesh.position.y,z:mesh.position.z}
+    stopRemoteReloadFallback(bot);
+    bot._mpReloadPose = {
+      mesh, start: performance.now(),
+      duration: Math.min(15000, Math.max(600, Number(duration || 2.5) * 1000)),
+      rotation: { x: mesh.rotation.x, y: mesh.rotation.y, z: mesh.rotation.z },
+      position: { x: mesh.position.x, y: mesh.position.y, z: mesh.position.z }
     };
     return true;
   }
 
-  function animateRemoteInspect(bot) {
-    const inspect = bot._mpInspect;
-    if (!inspect) return;
-    if (bot.cs2Agent?.heldWeapon !== inspect.mesh) {
-      stopRemoteInspect(bot);
+  function animateRemoteReloadFallback(bot) {
+    const pose = bot._mpReloadPose;
+    if (!pose) return;
+    if (bot.cs2Agent?.heldWeapon !== pose.mesh) {
+      stopRemoteReloadFallback(bot);
       return;
     }
-    const t = Math.max(0,Math.min(1,(performance.now()-inspect.start)/inspect.duration));
+    const t = Math.max(0, Math.min(1, (performance.now() - pose.start) / pose.duration));
     if (t >= 1 || !bot.alive) {
-      stopRemoteInspect(bot);
+      stopRemoteReloadFallback(bot);
       return;
     }
-    const tilt = Math.sin(Math.PI*t);
-    if (inspect.kind === 'reload') {
-      // A visible body-held weapon movement for assets without reload actions.
-      inspect.mesh.rotation.x = inspect.rotation.x + tilt*.27;
-      inspect.mesh.rotation.y = inspect.rotation.y - tilt*.16;
-      inspect.mesh.rotation.z = inspect.rotation.z - tilt*.35;
-      inspect.mesh.position.y = inspect.position.y - tilt*.11;
-    } else {
-      inspect.mesh.rotation.x = inspect.rotation.x - tilt*.24;
-      inspect.mesh.rotation.y = inspect.rotation.y + tilt*.65;
-      inspect.mesh.rotation.z = inspect.rotation.z + Math.sin(2*Math.PI*t)*.20;
-      inspect.mesh.position.y = inspect.position.y + tilt*.075;
-    }
+    const tilt = Math.sin(Math.PI * t);
+    pose.mesh.rotation.x = pose.rotation.x + tilt * .27;
+    pose.mesh.rotation.y = pose.rotation.y - tilt * .16;
+    pose.mesh.rotation.z = pose.rotation.z - tilt * .35;
+    pose.mesh.position.y = pose.position.y - tilt * .11;
   }
 
   function deferRemoteAction(bot, message) {
@@ -556,7 +528,7 @@
     const game = gameInstance();
     if (!game) return;
     if ((!bot || !bot.cs2Agent?.loco || !bot.cs2Agent?.heldWeapon) &&
-        allowDeferred && ['reload','inspect','equip'].includes(message.kind)) {
+        allowDeferred && ['reload','equip'].includes(message.kind)) {
       deferRemoteAction(bot, message);
       return;
     }
@@ -611,10 +583,6 @@
           break;
         case 'equip':
           agent?.draw?.(bot.weapon, {crouched:!!bot.crouchT});
-          break;
-        case 'inspect':
-          if (!startRemoteInspect(bot))
-            console.debug('[Clutcher MP] Inspect waiting for remote model');
           break;
         case 'weapon_sound':
           if (['clipout','clipin','bolt','draw','toss'].includes(message.sound)) {
@@ -729,16 +697,6 @@
     wrap(game.weapons, 'setScope', ([level]) => {
       sendVisualAction('scope', {scoped:Number(level) > 0});
     });
-
-    // Native inspect is performed by the first-person viewmodel. The
-    // third-person bot renderer may not have a matching clip for every gun.
-    // Native inspect is initiated by game.weapons.update(), which directly
-    // calls game.viewmodel.inspect() (and, if present, game.cs2.inspect()).
-    // Observe the call AFTER it reaches the viewmodel, not an imagined
-    // weapons.inspect() API.
-    wrap(game.viewmodel, 'inspect', () => {
-      sendVisualAction('inspect',{weapon:game.weapons?.current || 'knife'});
-    }, true);
 
     if (typeof game.dealDamage === 'function') {
       const original = game.dealDamage;

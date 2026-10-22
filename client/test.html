@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Clutcher MP — Network Test</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    body { max-width: 970px; margin: 30px auto; padding: 0 16px; background: #10151f; color: #eef2ff; }
+    .bar { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-bottom: 15px; }
+    button, input { padding: 9px 12px; border: 1px solid #475569; border-radius: 7px; background: #1f2937; color: inherit; }
+    button { cursor: pointer; } button:hover { background: #334155; }
+    canvas { width: 100%; border: 1px solid #475569; border-radius: 9px; background: #151f2d; }
+    #status { font-size: 14px; color: #a6b6d0; }
+    #events { height: 100px; overflow: auto; font: 12px monospace; color: #a6b6d0; }
+  </style>
+</head>
+<body>
+  <h1>Clutcher MP — v0.1 Test Client</h1>
+  <p>Open this page in two tabs. Connect both, join the same room, and move with WASD. This is a networking test, not the Clutcher game client.</p>
+  <div class="bar">
+    <button id="connect">Connect</button>
+    <input id="room" maxlength="32" value="lobby" aria-label="Room name">
+    <button id="join">Join room</button>
+    <button id="disconnect">Disconnect</button>
+    <span id="status">Disconnected</span>
+  </div>
+  <canvas id="world" width="920" height="510" aria-label="Multiplayer test world"></canvas>
+  <p>Player: <code id="playerId">—</code> | Room: <code id="roomId">—</code> | Ping: <span id="latency">—</span> ms</p>
+  <pre id="events"></pre>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const canvas = $("world");
+    const context = canvas.getContext("2d");
+    const held = new Set();
+    let socket = null;
+    let myId = null;
+    let joinedRoom = null;
+    let players = [];
+
+    function log(message) {
+      const line = document.createElement("div");
+      line.textContent = message;
+      $("events").prepend(line);
+      while ($("events").children.length > 30) $("events").lastChild.remove();
+    }
+    function online() { return socket && socket.readyState === WebSocket.OPEN; }
+    function send(message) { if (online()) socket.send(JSON.stringify(message)); }
+
+    $("connect").onclick = () => {
+      if (socket && socket.readyState <= WebSocket.OPEN) return;
+      const scheme = location.protocol === "https:" ? "wss:" : "ws:";
+      socket = new WebSocket(`${scheme}//${location.host}/ws`);
+      $("status").textContent = "Connecting...";
+      socket.onopen = () => { $("status").textContent = "Connected"; log("Connected"); };
+      socket.onclose = () => {
+        $("status").textContent = "Disconnected";
+        joinedRoom = null; myId = null; players = []; held.clear();
+        $("roomId").textContent = "—";
+        $("playerId").textContent = "—";
+        $("latency").textContent = "—";
+        log("Disconnected");
+      };
+      socket.onerror = () => log("WebSocket error");
+      socket.onmessage = (event) => {
+        let message;
+        try { message = JSON.parse(event.data); } catch { return; }
+        switch (message.type) {
+          case "welcome":
+            myId = message.id;
+            $("playerId").textContent = myId.slice(0, 8);
+            log("Welcome (protocol " + message.protocol_version + ")");
+            break;
+          case "joined":
+            joinedRoom = message.room;
+            $("roomId").textContent = joinedRoom;
+            players = [];
+            log("Joined " + joinedRoom);
+            break;
+          case "snapshot":
+            if (message.room === joinedRoom) players = message.players;
+            break;
+          case "pong":
+            $("latency").textContent = Math.max(0, Date.now() - message.nonce);
+            break;
+          case "error":
+            log("Server: " + message.message);
+            break;
+        }
+      };
+    };
+    $("join").onclick = () => send({type: "join_room", room: $("room").value});
+    $("disconnect").onclick = () => { if (socket) socket.close(); };
+
+    addEventListener("keydown", (event) => {
+      if (event.target.tagName === "INPUT") return;
+      const key = event.key.toLowerCase();
+      if ("wasd".includes(key)) { held.add(key); event.preventDefault(); }
+    });
+    addEventListener("keyup", (event) => held.delete(event.key.toLowerCase()));
+    addEventListener("blur", () => held.clear());
+
+    setInterval(() => {
+      if (!online()) return;
+      if (joinedRoom) {
+        send({
+          type: "input",
+          x: Number(held.has("d")) - Number(held.has("a")),
+          y: Number(held.has("s")) - Number(held.has("w"))
+        });
+      }
+    }, 50);
+    setInterval(() => { if (online()) send({type: "ping", nonce: Date.now()}); }, 2000);
+
+    function draw() {
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.strokeStyle = "#26364a";
+      context.lineWidth = 1;
+      for (let x = 0; x <= canvas.width; x += 40) {
+        context.beginPath(); context.moveTo(x, 0); context.lineTo(x, canvas.height); context.stroke();
+      }
+      for (let y = 0; y <= canvas.height; y += 40) {
+        context.beginPath(); context.moveTo(0, y); context.lineTo(canvas.width, y); context.stroke();
+      }
+      context.font = "14px system-ui";
+      for (const p of players) {
+        const x = canvas.width / 2 + p.x;
+        const y = canvas.height / 2 + p.y;
+        const isMe = p.id === myId;
+        context.fillStyle = isMe ? "#38bdf8" : "#fbbf24";
+        context.beginPath(); context.arc(x, y, 12, 0, Math.PI * 2); context.fill();
+        context.fillStyle = "#e2e8f0";
+        context.fillText(isMe ? "You" : p.id.slice(0, 8), x - 18, y - 20);
+      }
+      requestAnimationFrame(draw);
+    }
+    draw();
+  </script>
+</body>
+</html>

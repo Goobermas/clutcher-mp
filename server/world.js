@@ -8,6 +8,24 @@ export const WORLD_LIMIT = 1000;
 export const MAPS = Object.freeze(["oasis", "dusker"]);
 export const MODES = Object.freeze(["defusal", "dm"]);
 
+
+/** Drop functions, prototype keys, oversized strings and deeply nested client data. */
+export function cleanCosmetic(value, depth = 0) {
+  if (depth > 4 || value == null) return null;
+  if (typeof value === "string") return value.slice(0, 160);
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "boolean") return value;
+  if (Array.isArray(value)) return value.slice(0, 12).map(item => cleanCosmetic(item, depth + 1));
+  if (typeof value !== "object") return null;
+  const object = {};
+  for (const [key, item] of Object.entries(value).slice(0, 24)) {
+    if (!/^[a-zA-Z][a-zA-Z0-9_]{0,39}$/.test(key) ||
+        ["constructor", "prototype", "__proto__"].includes(key)) continue;
+    object[key] = cleanCosmetic(item, depth + 1);
+  }
+  return object;
+}
+
 export function validRoomName(roomId) {
   return typeof roomId === "string" && /^[a-zA-Z0-9_-]{1,32}$/.test(roomId);
 }
@@ -144,12 +162,23 @@ export class World {
       ? state.weapon : "knife";
     const name = typeof state.name === "string"
       ? state.name.replace(/[\x00-\x1f\x7f]/g, "").slice(0, 24) : "Player";
+    const appearance = {
+      skin: cleanCosmetic(state.skin),
+      skinItem: cleanCosmetic(state.skinItem),
+      gloves: cleanCosmetic(state.gloves)
+    };
     player.gameState = {
       name: name || "Player",
       x: state.x, y: state.y, z: state.z,
       yaw: state.yaw, pitch: state.pitch, vx: state.vx, vz: state.vz,
       crouch: state.crouch === true, airborne: state.airborne === true,
-      alive: state.alive === true, weapon
+      alive: state.alive === true, weapon,
+      ...appearance,
+      scoped: state.scoped === true,
+      reloading: state.reloading === true,
+      walking: state.walking === true,
+      firing: state.firing === true,
+      melee: state.melee === true
     };
   }
 
@@ -157,7 +186,9 @@ export class World {
     const room = this.rooms.get(session.roomId);
     const actor = room?.get(session.id);
     if (!actor?.ready || !actor.gameState) throw new Error("Not in a loaded match.");
-    if (!payload || !["fire", "reload", "jump", "land", "equip"].includes(payload.kind)) {
+    if (!payload || !["fire", "reload", "jump", "land", "equip",
+      "inspect", "knife", "step", "weapon_sound", "grenade_prep", "grenade_throw",
+      "scope", "crouch", "death", "spawn"].includes(payload.kind)) {
       throw new Error("Unsupported player action.");
     }
     const message = { type: "player_action", id: session.id, kind: payload.kind };
@@ -169,7 +200,20 @@ export class World {
       message.dir = payload.dir;
     }
     if (payload.kind === "reload" && Number.isFinite(payload.duration)) {
-      message.duration = Math.max(0.1, Math.min(15, payload.duration));
+      message.duration = Math.max(0.1, Math.min(30, payload.duration));
+      message.empty = payload.empty === true;
+    }
+    if (typeof payload.weapon === "string" && /^[a-z0-9_]{1,36}$/.test(payload.weapon)) {
+      message.weapon = payload.weapon;
+    }
+    if (payload.kind === "knife") message.heavy = payload.heavy === true;
+    if (payload.kind === "scope") message.scoped = payload.scoped === true;
+    if (payload.kind === "weapon_sound" || payload.kind === "step") {
+      if (typeof payload.sound !== "string" ||
+          !/^(?:clipout|clipin|bolt|draw|toss|step(?:_[a-z]+)?|knife_draw(?:_t)?|knife_swing(?:_heavy)?|gear_small|land)(?:_[a-z0-9]+)?$/.test(payload.sound)) {
+        throw new Error("Invalid animation sound.");
+      }
+      message.sound = payload.sound;
     }
     return {
       recipients: [...room.values()].filter(player => player.id !== session.id)

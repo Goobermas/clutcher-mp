@@ -187,7 +187,7 @@ export class World {
     const actor = room?.get(session.id);
     if (!actor?.ready || !actor.gameState) throw new Error("Not in a loaded match.");
     if (!payload || !["fire", "reload", "jump", "land", "equip",
-      "inspect", "knife", "step", "weapon_sound", "grenade_prep", "grenade_throw",
+      "knife", "step", "weapon_sound", "grenade_prep", "grenade_throw",
       "scope", "crouch", "death", "spawn"].includes(payload.kind)) {
       throw new Error("Unsupported player action.");
     }

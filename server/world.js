@@ -1,4 +1,5 @@
 import { RoomMatch } from "./match.js";
+import { GrenadeRelay } from "./grenades.js";
 
 export const TICK_HZ = 20;
 export const MOVE_SPEED = 120;
@@ -55,6 +56,7 @@ export class World {
     this.rooms = new Map();
     this.roomSettings = new Map();
     this.roomMatches = new Map();
+    this.grenades = new GrenadeRelay();
     this.tickNumber = 0;
   }
 
@@ -127,8 +129,10 @@ export class World {
         this.rooms.delete(session.roomId);
         this.roomSettings.delete(session.roomId);
         this.roomMatches.delete(session.roomId);
+        this.grenades.clear(session.roomId);
       }
     }
+    this.grenades.leave(session);
     session.roomId = null;
     session.team = null;
   }
@@ -222,14 +226,39 @@ export class World {
     };
   }
 
+  setObjectiveIntent(session,kind,now=performance.now()) {
+    const room=this.rooms.get(session.roomId);
+    const settings=this.roomSettings.get(session.roomId);
+    const match=this.roomMatches.get(session.roomId);
+    if(!room || !match || !settings)throw new Error("No active room.");
+    const player=room.get(session.id);
+    return match.objectiveIntent(player,kind,now,room,settings.map);
+  }
+
+  beginGrenade(session,data,now=performance.now()) {
+    const player=this.rooms.get(session.roomId)?.get(session.id);
+    return this.grenades.start(session,player,data,now);
+  }
+  updateGrenade(session,data,now=performance.now()) {
+    return this.grenades.update(session,data,now);
+  }
+  finishGrenade(session,data,now=performance.now()) {
+    return this.grenades.finish(session,data,now);
+  }
+  roomRecipients(roomId,excludeId=null) {
+    return [...(this.rooms.get(roomId)?.values()||[])]
+      .filter(p=>p.id!==excludeId).map(p=>p.socket);
+  }
+
   matchState(roomId, now = performance.now()) {
     const room = this.rooms.get(roomId);
     const match = this.roomMatches.get(roomId);
     if (!room || !match) return null;
     const readyCT = [...room.values()].some(player => player.team === "CT" && player.ready);
     const readyT = [...room.values()].some(player => player.team === "T" && player.ready);
-    match.advance(now, readyCT && readyT);
-    return match.snapshot(roomId, room, now);
+    match.advance(now,readyCT && readyT);
+    if(readyCT && readyT)match.progressObjective(now,room,this.roomSettings.get(roomId).map);
+    return match.snapshot(roomId,room,now);
   }
 
   matchStates(now = performance.now()) {

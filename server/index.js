@@ -108,6 +108,8 @@ wss.on("connection", (socket) => {
             mode: assignment.mode
           });
           send(socket, world.matchState(session.roomId));
+          send(socket, {type:"grenade_snapshot",
+            projectiles:world.grenades.snapshot(session.roomId)});
           break;
         }
         case "input":
@@ -120,6 +122,22 @@ wss.on("connection", (socket) => {
         case "player_state":
           world.setPlayerState(session, data);
           break;
+        case "objective_intent":
+          world.setObjectiveIntent(session,data.kind);
+          break;
+        case "grenade_throw":
+        case "grenade_state":
+        case "grenade_finish": {
+          const now=performance.now();
+          const message=data.type==="grenade_throw"
+            ? world.beginGrenade(session,data,now)
+            : data.type==="grenade_state"
+              ? world.updateGrenade(session,data,now)
+              : world.finishGrenade(session,data,now);
+          for(const peer of world.roomRecipients(session.roomId,session.id))
+            send(peer,message);
+          break;
+        }
         case "action": {
           const { recipients, message } = world.relayAction(session, data);
           for (const peer of recipients) send(peer, message);
@@ -157,6 +175,7 @@ const tickInterval = setInterval(() => {
 // Independent 4 Hz room clock updates. Every client receives the same
 // remaining time, round number, and CT/T score from the server.
 const matchInterval = setInterval(() => {
+  world.grenades.sweep(performance.now());
   for (const { recipients, message } of world.matchStates()) {
     for (const socket of recipients) send(socket, message);
   }

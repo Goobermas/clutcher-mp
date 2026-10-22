@@ -133,3 +133,35 @@ weapon mesh is loading.
 **Inspect is local only.** Clutcher has no third-person inspect animation.
 The multiplayer userscript does not observe, send, receive or emulate inspect,
 and never touches the game's native first-person inspect behavior.
+
+## Multiplayer objectives and throwables (v0.6)
+
+**Defusal plant/defuse fix:** The early multiplayer prototype disabled the
+native controller's `update()`, which also prevented C4 planting. The v0.6
+Node server now owns a room-level carrier, checks the player's reported
+position against known Oasis/Dusker bombsite bounds, and measures a
+3.2-second uninterrupted plant hold. It then changes the room to a 40-second
+planted phase. A Counter-Terrorist can hold use near the planted C4 to defuse
+using the base 10-second timer; if it expires, T wins. The client shows the
+authentic native C4 model, plant viewmodel action, HUD progress, and round
+score. Bomb drops/collection and validated kit purchases still need work.
+
+**Grenades:** Source game physics is the authority for each grenade flight:
+a thrown HE, flash, smoke, molotov, incendiary or decoy gets a room-unique ID,
+a spawn packet with its actual native position/velocity, and ~20 Hz
+`grenade_state` position/velocity/fuse updates. Peer game clients do *not*
+run a second collision simulation for that object; they render the native
+projectile mesh at the source-simulated coordinates. On landing/fuse
+completion, the source reports a position-linked `grenade_effect`.
+Receivers use native Clutcher flash-blind, smoke cloud, HE explosion or
+incendiary/molotov fire visuals/sounds at those coordinates.
+
+**Important limitations:** '1:1 trajectory' here means authoritative sampled
+projectile coordinates and shared effect coordinates, **not guaranteed
+pixel-identical per-render-frame positions** despite network latency.
+Smoke/fire particle randomness may differ, and the remote effects are not
+server-authoritative damage. Server still does not validate weapon damage,
+kills, ownership of bought grenades, or grenade inventory. This is the
+first integration pass; live multi-client visual/physics verification has not
+yet occurred. Grenade effect packets are only broadcast to connected peers,
+so a player joining after detonation will not receive already-active smoke/fire.

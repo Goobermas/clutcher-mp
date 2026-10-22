@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Clutcher MP - Multiplayer Bridge
 // @namespace    https://sillyhack.com/
-// @version      0.3.0
+// @version      0.4.0
 // @description  New Clutcher multiplayer WebSocket client (networking prototype)
 // @author       SillyHack
 // @match        *://clutcher.io/*
@@ -52,6 +52,10 @@
   let retryTimer = null;
   let retryDelay = 1500;
   const heldKeys = new Set();
+  const remoteModels = new Map();
+  let remoteConstructor = null;
+  let lastGrounded = true;
+  let lastSentWeapon = null;
 
   // These are document-level game elements, outside our shadow DOM.
   const nativeStyles = document.createElement('style');
@@ -179,6 +183,230 @@
   }
 
 
+
+  // Visual remote players. Reuse the game's model renderer, but never run
+  // the normal bot AI. The previous single-player bot count stays ZERO.
+  function discoverRemoteConstructor(game) {
+    if (remoteConstructor) return remoteConstructor;
+    const manager = game?.botMgr;
+    if (!manager?.setup || !Array.isArray(manager.bots)) return null;
+    remoteConstructor = manager.bots[0]?.constructor ?? null;
+    if (!remoteConstructor && manager.bots.length === 0) {
+      try {
+        // One temporary bot is only used to discover its constructor.
+        // Clear it immediately before any update frame.
+        manager.setup(1, 3, assignedTeam || 'CT');
+        remoteConstructor = manager.bots[0]?.constructor ?? null;
+      } finally {
+        manager.setup(0, 3, assignedTeam || 'CT');
+      }
+    }
+    return remoteConstructor;
+  }
+
+  function removeRemoteModel(id) {
+    const bot = remoteModels.get(id);
+    if (!bot) return;
+    const game = gameInstance();
+    const bots = game?.botMgr?.bots;
+    if (Array.isArray(bots)) {
+      const idx = bots.indexOf(bot);
+      if (idx !== -1) bots.splice(idx, 1);
+    }
+    for (const model of [bot.cs2Agent?.root, bot.shadow, bot.mesh]) {
+      if (model) try { game?.scene?.remove?.(model); } catch {}
+    }
+    remoteModels.delete(id);
+  }
+
+  function clearRemoteModels() {
+    for (const id of [...remoteModels.keys()]) removeRemoteModel(id);
+    remoteConstructor = null;
+  }
+
+  function makeRemoteModel(player) {
+    const game = gameInstance();
+    const state = player.game;
+    if (!game || game.state !== 'playing' || !game.botMgr ||
+        !state || player.id === playerId) return null;
+    const Bot = discoverRemoteConstructor(game);
+    if (!Bot) return null;
+    try {
+      const bot = new Bot(game, player.team === 'CT' ? 'CT' : 'T', state.name || 'Player', 3);
+      bot._clutcherMpRemote = player.id;
+      bot._networkTarget = state;
+      bot.target = { multiplayer: true };
+      bot.x = state.x;
+      bot.y = state.y;
+      bot.z = state.z;
+      bot.yaw = state.yaw;
+      bot._visY = state.y;
+      bot.weapon = state.weapon;
+      bot.respawnT = Infinity;
+      bot.health = 100;
+      bot.alive = state.alive;
+      bot.update = function(dt) {
+        const next = this._networkTarget;
+        if (!next) return;
+        const alpha = Math.min(1, Math.max(0, dt) * 16);
+        this.x += (next.x - this.x) * alpha;
+        this.y += (next.y - this.y) * alpha;
+        this.z += (next.z - this.z) * alpha;
+        const delta = Math.atan2(Math.sin(next.yaw - this.yaw), Math.cos(next.yaw - this.yaw));
+        this.yaw += delta * alpha;
+        this._lookPitch = next.pitch;
+        this.crouchT = next.crouch ? 0.1 : 0;
+        this.onGround = !next.airborne;
+        this.vy = next.airborne ? 1 : 0;
+        this.vx += (next.vx - this.vx) * alpha;
+        this.vz += (next.vz - this.vz) * alpha;
+        this.weapon = next.weapon;
+        this.name = next.name || this.name;
+        this._visY = this.y;
+        // The real game renderer animates the character body, gun and shadow.
+        this._updateCS2Body?.(dt, game);
+        this.shadow?.position?.set?.(this.x, this.y + 0.02, this.z);
+      };
+      game.botMgr.bots.push(bot);
+      remoteModels.set(player.id, bot);
+      try { game.hud?.buildAvatars?.(); } catch {}
+      return bot;
+    } catch (error) {
+      console.warn('[Clutcher MP] Remote character model failed:', error);
+      return null;
+    }
+  }
+
+  function syncRemoteModels() {
+    const game = gameInstance();
+    if (!game || game.state !== 'playing' || !isReady || !joinedRoom) {
+      if (remoteModels.size) clearRemoteModels();
+      return;
+    }
+    const seen = new Set();
+    for (const player of players) {
+      if (player.id === playerId || !player.game) continue;
+      const data = player.game;
+      if (!['CT', 'T'].includes(player.team) ||
+          !['x','y','z','yaw','pitch','vx','vz'].every(key => Number.isFinite(data[key]))) continue;
+      seen.add(player.id);
+      const model = remoteModels.get(player.id) || makeRemoteModel(player);
+      if (!model) continue;
+      model.team = player.team;
+      model._networkTarget = data;
+      if (data.alive && !model.alive) {
+        model.alive = true;
+        model.health = 100;
+        model.cs2Agent?.revive?.();
+        if (model.shadow) model.shadow.visible = true;
+      } else if (!data.alive && model.alive) {
+        model.alive = false;
+        if (model.cs2Agent?.root) model.cs2Agent.root.visible = false;
+        if (model.shadow) model.shadow.visible = false;
+      } else if (data.alive && model.cs2Agent?.root) {
+        model.cs2Agent.root.visible = true;
+      }
+    }
+    for (const id of [...remoteModels.keys()]) {
+      if (!seen.has(id)) removeRemoteModel(id);
+    }
+  }
+
+  function remoteAction(message) {
+    const bot = remoteModels.get(message.id);
+    const game = gameInstance();
+    if (!bot || !game || !bot.alive) return;
+    try {
+      if (message.kind === 'fire') {
+        bot.cs2Agent?.shoot?.(bot.weapon);
+        const sound = 'shot_' + bot.weapon;
+        if (game.audio?.manifest?.[sound] || game.audio?.bank?.has?.(sound)) {
+          game.audio?.play?.(sound, { pos: bot });
+        }
+        if (message.dir?.length === 3) {
+          const [dx, dy, dz] = message.dir;
+          const sy = bot.y + (bot.crouchT ? 1.1 : 1.6);
+          game.effects?.tracer?.(bot.x, sy, bot.z,
+            bot.x + dx * 35, sy + dy * 35, bot.z + dz * 35, 'rifle', bot.weapon);
+        }
+      } else if (message.kind === 'reload') {
+        bot.cs2Agent?.reload?.(bot.weapon, message.duration || 2.5,
+          { crouched: !!bot.crouchT });
+      } else if (message.kind === 'jump') {
+        game.audio?.play?.('gear_small', { pos: bot });
+      } else if (message.kind === 'land') {
+        game.audio?.play?.('land', { pos: bot });
+      }
+    } catch (error) {
+      console.debug('[Clutcher MP] Remote animation skipped:', error);
+    }
+  }
+
+  function installActionHooks(game) {
+    if (!game || game.__clutcherMpActions) return;
+    game.__clutcherMpActions = true;
+    if (typeof game.fireBullet === 'function') {
+      const original = game.fireBullet;
+      game.fireBullet = function(shooter, x, y, z, dx, dy, dz) {
+        if (isReady && shooter === game.player && [dx,dy,dz].every(Number.isFinite)) {
+          const length = Math.hypot(dx,dy,dz) || 1;
+          send({ type:'action', kind:'fire', dir:[dx/length,dy/length,dz/length] });
+        }
+        return original.apply(this, arguments);
+      };
+    }
+    if (typeof game.dealDamage === 'function') {
+      const original = game.dealDamage;
+      game.dealDamage = function(target) {
+        // Never apply fake local damage to another human's visual bot.
+        if (target?._clutcherMpRemote) return;
+        return original.apply(this, arguments);
+      };
+    }
+    const audio = game.audio;
+    if (typeof audio?.playWeapon === 'function' && !audio.__clutcherMpAudioHook) {
+      const original = audio.playWeapon;
+      audio.__clutcherMpAudioHook = true;
+      audio.playWeapon = function(part, weapon, options) {
+        if (isReady && String(part).startsWith('clipout') && !options?.pos) {
+          send({ type:'action', kind:'reload',
+            duration: Math.max(0.1, Math.min(15, Number(game.weapons?.def?.()?.reload) || 2.5)) });
+        }
+        return original.apply(this, arguments);
+      };
+    }
+  }
+
+  function publishGameState() {
+    const game = gameInstance();
+    const p = game?.player;
+    if (!isReady || !joinedRoom || game?.state !== 'playing' || !p) return;
+    installActionHooks(game);
+    const values = [p.x, p.y, p.z, p.yaw, p.pitch, p.vx, p.vz];
+    if (!values.every(Number.isFinite)) return;
+    const name = String(PAGE.localStorage?.getItem?.('clutcher_name') || 'Player');
+    send({
+      type:'player_state', name,
+      x:p.x, y:p.y, z:p.z,
+      yaw:p.yaw, pitch:p.pitch, vx:p.vx, vz:p.vz,
+      crouch:!!p.crouching, airborne:!p.onGround,
+      alive:!!p.alive, weapon:game.weapons?.current || 'knife'
+    });
+    if (lastGrounded && !p.onGround && p.vy > 0.5) {
+      send({ type:'action', kind:'jump' });
+    } else if (!lastGrounded && p.onGround) {
+      send({ type:'action', kind:'land' });
+    }
+    lastGrounded = !!p.onGround;
+    const weapon = game.weapons?.current || 'knife';
+    lastSentWeapon = weapon;
+  }
+
+  setInterval(() => {
+    publishGameState();
+    syncRemoteModels();
+  }, 50);
+
   function secondsRemaining() {
     if (!matchState) return 0;
     if (matchState.phase === 'waiting') return matchState.roundSeconds || 600;
@@ -259,7 +487,7 @@
 
   function applyMatchState(message) {
     if (!joinedRoom || message.room !== joinedRoom) return;
-    if (!['waiting','countdown','live','ended'].includes(message.phase)) return;
+    if (!['waiting','countdown','live','ended','match_end'].includes(message.phase)) return;
     if (!message.score || !Number.isFinite(message.remainingMs) ||
         !Number.isFinite(message.round) || !Number.isFinite(message.roundSeconds) ||
         !Number.isFinite(message.score.CT) || !Number.isFinite(message.score.T)) return;
@@ -274,7 +502,9 @@
       message.score.CT + ':' + message.score.T;
     $('mpCT').textContent = 'CT ' + message.score.CT;
     $('mpT').textContent = message.score.T + ' T';
-    $('mpPhase').textContent = message.phase.toUpperCase() + ' • Round ' + message.round +
+    $('mpPhase').textContent = message.phase.toUpperCase() +
+      (assignedMode === 'defusal' ? ' • Round ' + message.round + '/' + (message.maxRounds || 15)
+        : ' • Team Deathmatch') +
       (message.phase === 'waiting' ? ' • waiting for a loaded player on each side' :
       message.phase === 'ended' && message.winner ? ' • ' + message.winner + ' wins' : '');
     if (phaseSignature !== lastPhaseSignature ||
@@ -300,7 +530,7 @@
     // Sync both the universal HUD timer and Defusal's native round controller.
     game.roundActive = true;
     game.roundTimeLeft = time;
-    game.frozen = matchState.phase === 'countdown';
+    game.frozen = matchState.phase === 'waiting' || matchState.phase === 'countdown';
     game.respawnAllowed = assignedMode === 'dm';
 
     const ctl = game.modeCtl;
@@ -311,9 +541,11 @@
       ctl.roundNum = matchState.round;
       ctl.roundClock = time;
       ctl.freezeT = matchState.phase === 'countdown' ? time : 0;
-      ctl.endT = matchState.phase === 'ended' ? time : 0;
-      ctl.state = matchState.phase === 'countdown' || matchState.phase === 'waiting'
-        ? 'freeze' : matchState.phase === 'ended' ? 'end' : 'live';
+      ctl.endT = ['ended', 'match_end'].includes(matchState.phase) ? time : 0;
+      ctl._endClock = ctl.endT;
+      ctl.state = ['countdown', 'waiting'].includes(matchState.phase)
+        ? 'freeze' : matchState.phase === 'match_end' ? 'match_end' :
+          matchState.phase === 'ended' ? 'end' : 'live';
     }
 
     // Not every native HUD mode exposes team scores yet, so maintain the
@@ -399,6 +631,7 @@
       await game.finishTeamSelect(assignedTeam);
       if (game.state !== 'playing') throw new Error('Game did not finish entering the map.');
       lockNativeRoundLogic(game);
+      installActionHooks(game);
       markReady(true);
       updateMatchPresentation();
       setStatus('Playing ' + map + ' • ' + assignedTeam + ' • no bots', 'connected');
@@ -544,7 +777,11 @@
             typeof p.id === 'string' && Number.isFinite(p.x) && Number.isFinite(p.y)
           ).slice(0, 16);
           updateStats();
+          syncRemoteModels();
           draw();
+          break;
+        case 'player_action':
+          remoteAction(message);
           break;
         case 'pong':
           if (Number.isSafeInteger(message.nonce)) {
@@ -571,6 +808,7 @@
       $('mpTeam').textContent = '—';
       $('mpMapName').textContent = 'No map';
       heldKeys.clear();
+      clearRemoteModels();
       clearMatch();
       updateStats();
       draw();
@@ -592,6 +830,7 @@
     }
     joinedRoom = null;
     players = [];
+    clearRemoteModels();
     clearMatch();
     send({
       type: 'join_room',
@@ -618,6 +857,7 @@
     $('mpTeam').textContent = '—';
     $('mpMapName').textContent = 'No map';
     clearMatch();
+    clearRemoteModels();
     releaseNativeRoundLogic();
     updateStats();
     draw();

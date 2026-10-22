@@ -36,7 +36,7 @@ const server = http.createServer((req, res) => {
 
 const wss = new WebSocketServer({
   noServer: true,
-  maxPayload: 2048,
+  maxPayload: 8192,
   perMessageDeflate: false
 });
 

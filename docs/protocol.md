@@ -92,8 +92,8 @@ The server broadcasts a match update **four times per second** (and directly aft
   "revision":3,
   "phase":"live",
   "round":1,
-  "roundSeconds":600,
-  "remainingMs":552000,
+  "roundSeconds":115.2,
+  "remainingMs":87000,
   "score":{"CT":0,"T":0},
   "winner":null,
   "ct":1,
@@ -106,10 +106,10 @@ The server broadcasts a match update **four times per second** (and directly aft
 Server-owned state machine:
 
 1. `waiting`: No running timer until there is a loaded player on each side.
-2. `countdown`: Shared 5-second freeze.
-3. `live`: Shared 10-minute round clock.
-4. `ended`: Shared 5-second results period.
-5. Next round begins with a new freeze; room score carries forward. Scores reset when the room becomes empty.
+2. `countdown`: Shared 5-second freeze in Defusal only.
+3. `live`: Shared 115.2-second Defusal round or 600-second Team Deathmatch match.
+4. `ended`: Shared 5-second Defusal results or 6-second Team Deathmatch results.
+5. In Defusal, the server moves to `match_end` at eight wins (maximum 15 rounds), otherwise starts the next round. In TDM the next 600-second match begins after the results period. Scores reset when the room becomes empty.
 
 **Scoring scope:** As an initial Defusal fallback, a round ending by timeout awards CT one point (there is no bomb-plant network protocol yet). Team Deathmatch scores remain 0–0 until server-validated combat events are implemented. There is no message that allows clients to submit arbitrary scores or round winners. The server does **not** yet understand kills, bomb plants, defuses, or weapon damage.
 

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Clutcher MP - Multiplayer Bridge
 // @namespace    https://sillyhack.com/
-// @version      0.5.0
+// @version      0.5.1
 // @description  New Clutcher multiplayer WebSocket client (networking prototype)
 // @author       SillyHack
 // @match        *://clutcher.io/*
@@ -53,6 +53,7 @@
   let retryDelay = 1500;
   const heldKeys = new Set();
   const remoteModels = new Map();
+  const deferredActions = new Map();
   let remoteConstructor = null;
   let lastGrounded = true;
   let lastAlive = null;
@@ -336,11 +337,13 @@
       if (model) try { game?.scene?.remove?.(model); } catch {}
     }
     remoteModels.delete(id);
+    deferredActions.delete(id);
   }
 
   function clearRemoteModels() {
     for (const id of [...remoteModels.keys()]) removeRemoteModel(id);
     remoteConstructor = null;
+    deferredActions.clear();
   }
 
   function makeRemoteModel(player) {
@@ -389,6 +392,8 @@
         this._visY = this.y;
         // The real game renderer animates the character body, gun and shadow.
         this._updateCS2Body?.(dt, game);
+        playDeferredActions(this);
+        animateRemoteInspect(this);
         applyKnifeModel(this, next);
         this.shadow?.position?.set?.(this.x, this.y + 0.02, this.z);
       };
@@ -420,6 +425,14 @@
       model.team = player.team;
       model._networkTarget = data;
       applyRemoteCosmetics(model, data);
+      // Recover if the one-shot reload packet arrived before this model's
+      // animation rig. Do not restart the clip on every 20 Hz snapshot.
+      if (data.reloading && !model._mpReloading && model.cs2Agent?.loco) {
+        remoteAction({id:player.id,kind:'reload',weapon:data.weapon,
+          duration:2.5,empty:false},false);
+      } else if (!data.reloading) {
+        model._mpReloading = false;
+      }
       if (data.alive && !model.alive) {
         model.alive = true;
         model.health = 100;
@@ -440,10 +453,85 @@
   }
 
 
-  function remoteAction(message) {
+
+  // Native third-person assets don't necessarily contain a dedicated inspect
+  // action. Use a real action clip when one exists, otherwise animate the
+  // visible held weapon without disturbing game-owned bone animation.
+  function stopRemoteInspect(bot) {
+    const inspect = bot?._mpInspect;
+    if (!inspect) return;
+    if (inspect.mesh) {
+      inspect.mesh.rotation.set(inspect.rotation.x,inspect.rotation.y,inspect.rotation.z);
+      inspect.mesh.position.set(inspect.position.x,inspect.position.y,inspect.position.z);
+    }
+    bot._mpInspect = null;
+  }
+
+  function startRemoteInspect(bot) {
+    const agent = bot?.cs2Agent;
+    if (!agent?.loco) return false;
+    const loco = agent.loco;
+    const weapon = agent._weaponId || bot.weapon;
+    const clip = loco.actionName?.('inspect', weapon, {crouched:!!bot.crouchT}) ||
+      (loco.hasAction?.('inspect') ? 'inspect' : null);
+    if (clip && loco.playAction?.(clip)) return true;
+    const mesh = agent.heldWeapon;
+    if (!mesh?.rotation || !mesh?.position) return false;
+    stopRemoteInspect(bot);
+    bot._mpInspect = {
+      mesh, start:performance.now(), duration:2400,
+      rotation:{x:mesh.rotation.x,y:mesh.rotation.y,z:mesh.rotation.z},
+      position:{x:mesh.position.x,y:mesh.position.y,z:mesh.position.z}
+    };
+    return true;
+  }
+
+  function animateRemoteInspect(bot) {
+    const inspect = bot._mpInspect;
+    if (!inspect) return;
+    if (bot.cs2Agent?.heldWeapon !== inspect.mesh) {
+      stopRemoteInspect(bot);
+      return;
+    }
+    const t = Math.max(0,Math.min(1,(performance.now()-inspect.start)/inspect.duration));
+    if (t >= 1 || !bot.alive) {
+      stopRemoteInspect(bot);
+      return;
+    }
+    const tilt = Math.sin(Math.PI*t);
+    inspect.mesh.rotation.x = inspect.rotation.x - tilt*.24;
+    inspect.mesh.rotation.y = inspect.rotation.y + tilt*.65;
+    inspect.mesh.rotation.z = inspect.rotation.z + Math.sin(2*Math.PI*t)*.20;
+    inspect.mesh.position.y = inspect.position.y + tilt*.075;
+  }
+
+  function deferRemoteAction(bot, message) {
+    const list = deferredActions.get(message.id) || [];
+    list.push({message, expiration:performance.now()+2000});
+    if (list.length > 10) list.shift();
+    deferredActions.set(message.id,list);
+  }
+
+  function playDeferredActions(bot) {
+    if (!bot?.cs2Agent?.loco || !bot._clutcherMpRemote) return;
+    const list = deferredActions.get(bot._clutcherMpRemote);
+    if (!list?.length) return;
+    deferredActions.delete(bot._clutcherMpRemote);
+    for (const item of list) {
+      if (item.expiration > performance.now()) remoteAction(item.message, false);
+    }
+  }
+
+  function remoteAction(message, allowDeferred = true) {
     const bot = remoteModels.get(message.id);
     const game = gameInstance();
-    if (!bot || !game) return;
+    if (!game) return;
+    if ((!bot || !bot.cs2Agent?.loco) && allowDeferred &&
+        ['reload','inspect','equip'].includes(message.kind)) {
+      deferRemoteAction(bot, message);
+      return;
+    }
+    if (!bot) return;
     try {
       if (message.kind === 'spawn') {
         bot.alive = true;
@@ -471,11 +559,20 @@
           }
           break;
         }
-        case 'reload':
-          agent?.reload?.(bot.weapon, message.duration || 2.5, {
+        case 'reload': {
+          // This game's bot renderer keys reload clips by the actual
+          // third-person weapon ID, not by first-person inventory name.
+          const weaponId = agent?._weaponId || message.weapon || bot.weapon;
+          const result = agent?.reload?.(weaponId, message.duration || 2.5, {
             empty: !!message.empty, crouched: !!bot.crouchT
           });
+          bot._mpReloading = true;
+          bot._mpLastReloadAt = performance.now();
+          if (!result) {
+            console.debug('[Clutcher MP] No remote reload clip for',weaponId);
+          }
           break;
+        }
         case 'knife':
           agent?.knifeAttack?.(message.heavy ? 'stab' : 'swing');
           game.audio?.play?.(message.heavy ? 'knife_swing_heavy' : 'knife_swing',
@@ -484,14 +581,10 @@
         case 'equip':
           agent?.draw?.(bot.weapon, {crouched:!!bot.crouchT});
           break;
-        case 'inspect': {
-          const loco = agent?.loco;
-          const animation = loco?.actionName?.('inspect', bot.weapon,
-            {crouched:!!bot.crouchT});
-          if (animation) loco.playAction?.(animation);
-          else agent?.inspect?.();
+        case 'inspect':
+          if (!startRemoteInspect(bot))
+            console.debug('[Clutcher MP] Inspect waiting for remote model');
           break;
-        }
         case 'weapon_sound':
           if (['clipout','clipin','bolt','draw','toss'].includes(message.sound)) {
             game.audio?.playWeapon?.(message.sound, message.weapon || bot.weapon, {pos:bot});

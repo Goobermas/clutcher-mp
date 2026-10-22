@@ -438,68 +438,205 @@
     }
   }
 
+
   function remoteAction(message) {
     const bot = remoteModels.get(message.id);
     const game = gameInstance();
-    if (!bot || !game || !bot.alive) return;
+    if (!bot || !game) return;
     try {
-      if (message.kind === 'fire') {
-        bot.cs2Agent?.shoot?.(bot.weapon);
-        const sound = 'shot_' + bot.weapon;
-        if (game.audio?.manifest?.[sound] || game.audio?.bank?.has?.(sound)) {
+      if (message.kind === 'spawn') {
+        bot.alive = true;
+        bot.health = 100;
+        bot.cs2Agent?.revive?.();
+        return;
+      }
+      if (message.kind === 'death') {
+        if (bot.alive) bot.die?.('chest', false, null);
+        return;
+      }
+      if (!bot.alive) return;
+      const agent = bot.cs2Agent;
+      switch (message.kind) {
+        case 'fire': {
+          agent?.shoot?.(message.weapon || bot.weapon);
+          const sound = 'shot_' + (message.weapon || bot.weapon);
           game.audio?.play?.(sound, { pos: bot });
+          if (message.dir?.length === 3) {
+            const [dx, dy, dz] = message.dir;
+            const height = bot.y + (bot.crouchT ? 1.1 : 1.6);
+            game.effects?.tracer?.(bot.x, height, bot.z,
+              bot.x + dx * 35, height + dy * 35, bot.z + dz * 35,
+              'rifle', bot.weapon);
+          }
+          break;
         }
-        if (message.dir?.length === 3) {
-          const [dx, dy, dz] = message.dir;
-          const sy = bot.y + (bot.crouchT ? 1.1 : 1.6);
-          game.effects?.tracer?.(bot.x, sy, bot.z,
-            bot.x + dx * 35, sy + dy * 35, bot.z + dz * 35, 'rifle', bot.weapon);
+        case 'reload':
+          agent?.reload?.(bot.weapon, message.duration || 2.5, {
+            empty: !!message.empty, crouched: !!bot.crouchT
+          });
+          break;
+        case 'knife':
+          agent?.knifeAttack?.(message.heavy ? 'stab' : 'swing');
+          game.audio?.play?.(message.heavy ? 'knife_swing_heavy' : 'knife_swing',
+            {pos:bot});
+          break;
+        case 'equip':
+          agent?.draw?.(bot.weapon, {crouched:!!bot.crouchT});
+          break;
+        case 'inspect': {
+          const loco = agent?.loco;
+          const animation = loco?.actionName?.('inspect', bot.weapon,
+            {crouched:!!bot.crouchT});
+          if (animation) loco.playAction?.(animation);
+          else agent?.inspect?.();
+          break;
         }
-      } else if (message.kind === 'reload') {
-        bot.cs2Agent?.reload?.(bot.weapon, message.duration || 2.5,
-          { crouched: !!bot.crouchT });
-      } else if (message.kind === 'jump') {
-        game.audio?.play?.('gear_small', { pos: bot });
-      } else if (message.kind === 'land') {
-        game.audio?.play?.('land', { pos: bot });
+        case 'weapon_sound':
+          if (['clipout','clipin','bolt','draw','toss'].includes(message.sound)) {
+            game.audio?.playWeapon?.(message.sound, message.weapon || bot.weapon, {pos:bot});
+          } else if (message.sound) {
+            game.audio?.play?.(message.sound, {pos:bot});
+          }
+          break;
+        case 'step':
+          game.audio?.play?.(message.sound || 'step', {pos:bot});
+          break;
+        case 'jump':
+          game.audio?.play?.('gear_small', {pos:bot,vol:0.5});
+          break;
+        case 'land':
+          game.audio?.play?.('land', {pos:bot});
+          break;
+        case 'grenade_prep':
+          agent?.throwGrenade?.({crouched:!!bot.crouchT});
+          break;
+        case 'grenade_throw':
+          agent?.throwGrenade?.({crouched:!!bot.crouchT});
+          game.audio?.play?.('prethrow_gear', {pos:bot});
+          break;
+        case 'scope':
+          bot._networkTarget = {...bot._networkTarget,scoped:!!message.scoped};
+          break;
+        case 'crouch':
+          bot.crouchT = bot._networkTarget?.crouch ? 0.1 : 0;
+          break;
       }
     } catch (error) {
-      console.debug('[Clutcher MP] Remote animation skipped:', error);
+      console.debug('[Clutcher MP] Remote visual action unsupported:', message.kind, error);
     }
+  }
+
+  function sendVisualAction(kind, fields = {}) {
+    if (!isReady || socket?.readyState !== WebSocket.OPEN ||
+        gameInstance()?.state !== 'playing') return;
+    send({type:'action', kind, ...fields});
   }
 
   function installActionHooks(game) {
     if (!game || game.__clutcherMpActions) return;
     game.__clutcherMpActions = true;
-    if (typeof game.fireBullet === 'function') {
-      const original = game.fireBullet;
-      game.fireBullet = function(shooter, x, y, z, dx, dy, dz) {
-        if (isReady && shooter === game.player && [dx,dy,dz].every(Number.isFinite)) {
-          const length = Math.hypot(dx,dy,dz) || 1;
-          send({ type:'action', kind:'fire', dir:[dx/length,dy/length,dz/length] });
+    installCosmeticHooks(game);
+
+    function wrap(obj, method, listener) {
+      if (typeof obj?.[method] !== 'function') return;
+      const original = obj[method];
+      obj[method] = function(...args) {
+        // Observe local actions; preserve original game behavior.
+        try { listener(args, this); } catch (error) {
+          console.debug('[Clutcher MP] Action observation:', method, error);
         }
-        return original.apply(this, arguments);
+        return original.apply(this, args);
       };
     }
+
+    wrap(game, 'fireBullet', ([shooter, x, y, z, dx, dy, dz]) => {
+      if (shooter !== game.player || ![dx,dy,dz].every(Number.isFinite)) return;
+      const n = Math.hypot(dx,dy,dz) || 1;
+      sendVisualAction('fire', {
+        weapon:game.weapons?.current || 'knife',
+        dir:[dx/n,dy/n,dz/n]
+      });
+    });
+
+    wrap(game.weapons, 'knifeAttack', ([heavy]) => {
+      sendVisualAction('knife', {heavy:!!heavy});
+    });
+
+    wrap(game.weapons, 'reload', () => {
+      const def = game.weapons?.def?.();
+      const state = game.weapons?.state?.();
+      const per = Math.max(0.1, Number(def?.reload) || 2.5);
+      const shells = def?.shellReload
+        ? Math.max(1, Math.min(Number(def?.mag || 1) - Number(state?.ammo || 0),
+            Number(state?.reserve || 1)))
+        : 1;
+      const duration = Math.min(30, per * shells);
+      sendVisualAction('reload', {
+        duration,
+        empty: Number(state?.ammo) <= 0,
+        weapon:game.weapons?.current || 'knife'
+      });
+    });
+
+    wrap(game.weapons, 'setWeapon', ([weapon]) => {
+      if (typeof weapon === 'string') sendVisualAction('equip', {weapon});
+    });
+
+    wrap(game.weapons, 'throwGrenade', () => {
+      sendVisualAction('grenade_throw', {weapon:game.weapons?.current || 'knife'});
+    });
+
+    wrap(game.weapons, 'setScope', ([level]) => {
+      sendVisualAction('scope', {scoped:Number(level) > 0});
+    });
+
+    // Native inspect is performed by the first-person viewmodel. The
+    // third-person bot renderer may not have a matching clip for every gun.
+    wrap(game.viewmodel, 'inspect', () => {
+      sendVisualAction('inspect', {weapon:game.weapons?.current || 'knife'});
+    });
+
     if (typeof game.dealDamage === 'function') {
       const original = game.dealDamage;
       game.dealDamage = function(target) {
-        // Never apply fake local damage to another human's visual bot.
+        // Real network players must never take speculative local bot damage.
         if (target?._clutcherMpRemote) return;
         return original.apply(this, arguments);
       };
     }
+
     const audio = game.audio;
-    if (typeof audio?.playWeapon === 'function' && !audio.__clutcherMpAudioHook) {
-      const original = audio.playWeapon;
+    if (audio && !audio.__clutcherMpAudioHook) {
       audio.__clutcherMpAudioHook = true;
-      audio.playWeapon = function(part, weapon, options) {
-        if (isReady && String(part).startsWith('clipout') && !options?.pos) {
-          send({ type:'action', kind:'reload',
-            duration: Math.max(0.1, Math.min(15, Number(game.weapons?.def?.()?.reload) || 2.5)) });
-        }
-        return original.apply(this, arguments);
-      };
+      let localWeaponAudioDepth = 0;
+      if (typeof audio.playWeapon === 'function') {
+        const original = audio.playWeapon;
+        audio.playWeapon = function(part, weapon, options) {
+          const local = !options?.pos || options.pos === game.player;
+          if (local && ['clipout','clipin','bolt','draw','toss'].includes(part)) {
+            sendVisualAction('weapon_sound', {sound:part,weapon:weapon || game.weapons?.current});
+          }
+          localWeaponAudioDepth++;
+          try { return original.apply(this, arguments); }
+          finally { localWeaponAudioDepth--; }
+        };
+      }
+      if (typeof audio.play === 'function') {
+        const original = audio.play;
+        audio.play = function(sound, options) {
+          const local = !options?.pos || options.pos === game.player;
+          if (local && typeof sound === 'string' && !localWeaponAudioDepth) {
+            if (/^step(?:_[a-z]+)?$/.test(sound)) {
+              sendVisualAction('step', {sound});
+            } else if (sound === 'land') {
+              sendVisualAction('land');
+            } else if (/^(?:knife_draw(?:_t)?|gear_small)$/.test(sound)) {
+              sendVisualAction('weapon_sound', {sound});
+            }
+          }
+          return original.apply(this, arguments);
+        };
+      }
     }
   }
 

@@ -1,0 +1,159 @@
+import http from "node:http";
+import { readFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { WebSocket, WebSocketServer } from "ws";
+import { World, TICK_HZ } from "./world.js";
+
+const HOST = process.env.HOST || "127.0.0.1";
+const PORT = Number(process.env.PORT ?? 3000);
+const PROTOCOL_VERSION = 1;
+const MAX_MESSAGES_PER_SECOND = 100;
+const MAX_BUFFERED_BYTES = 256 * 1024;
+const world = new World();
+const testPage = readFileSync(new URL("../client/test.html", import.meta.url));
+
+function send(socket, message) {
+  if (socket.readyState !== WebSocket.OPEN || socket.bufferedAmount > MAX_BUFFERED_BYTES) return;
+  socket.send(typeof message === "string" ? message : JSON.stringify(message));
+}
+
+const server = http.createServer((req, res) => {
+  const pathname = new URL(req.url, "http://localhost").pathname;
+  if (req.method !== "GET") {
+    res.writeHead(405, { "content-type": "text/plain" }).end("Method not allowed");
+  } else if (pathname === "/") {
+    res.writeHead(200, {
+      "content-type": "text/html; charset=utf-8",
+      "cache-control": "no-store"
+    }).end(testPage);
+  } else if (pathname === "/health") {
+    res.writeHead(200, { "content-type": "application/json; charset=utf-8" })
+      .end(JSON.stringify({ status: "ok", protocol_version: PROTOCOL_VERSION }));
+  } else {
+    res.writeHead(404, { "content-type": "text/plain" }).end("Not found");
+  }
+});
+
+const wss = new WebSocketServer({
+  noServer: true,
+  maxPayload: 2048,
+  perMessageDeflate: false
+});
+
+server.on("upgrade", (request, socket, head) => {
+  const pathname = new URL(request.url, "http://localhost").pathname;
+  if (pathname !== "/ws") {
+    socket.destroy();
+    return;
+  }
+  wss.handleUpgrade(request, socket, head, (ws) => {
+    wss.emit("connection", ws, request);
+  });
+});
+
+wss.on("connection", (socket) => {
+  const session = { id: randomUUID(), roomId: null };
+  let rateWindowStart = Date.now();
+  let messageCount = 0;
+  socket.isAlive = true;
+
+  socket.on("pong", () => { socket.isAlive = true; });
+  send(socket, {
+    type: "welcome",
+    id: session.id,
+    protocol_version: PROTOCOL_VERSION,
+    tick_hz: TICK_HZ
+  });
+
+  socket.on("message", (raw, isBinary) => {
+    const now = Date.now();
+    if (now - rateWindowStart >= 1000) {
+      rateWindowStart = now;
+      messageCount = 0;
+    }
+    if (++messageCount > MAX_MESSAGES_PER_SECOND) {
+      socket.close(1008, "Rate limit exceeded");
+      return;
+    }
+
+    if (isBinary) {
+      send(socket, { type: "error", message: "JSON text messages only." });
+      return;
+    }
+
+    let data;
+    try {
+      data = JSON.parse(raw.toString("utf8"));
+    } catch {
+      send(socket, { type: "error", message: "Invalid JSON." });
+      return;
+    }
+    if (!data || typeof data !== "object" || Array.isArray(data)) {
+      send(socket, { type: "error", message: "Invalid message." });
+      return;
+    }
+
+    try {
+      switch (data.type) {
+        case "join_room":
+          world.join(session, data.room, socket);
+          send(socket, { type: "joined", room: session.roomId });
+          break;
+        case "input":
+          world.setInput(session, data.x, data.y);
+          break;
+        case "ping":
+          if (!Number.isSafeInteger(data.nonce) || data.nonce < 0) {
+            throw new Error("Invalid ping nonce.");
+          }
+          send(socket, { type: "pong", nonce: data.nonce });
+          break;
+        default:
+          throw new Error("Unknown message type.");
+      }
+    } catch (error) {
+      send(socket, { type: "error", message: error.message });
+    }
+  });
+
+  socket.on("close", () => {
+    world.leave(session);
+    console.log(`Player disconnected: ${session.id}`);
+  });
+  socket.on("error", (error) => console.error("WebSocket error:", error.message));
+  console.log(`Player connected: ${session.id}`);
+});
+
+const tickInterval = setInterval(() => {
+  for (const { recipients, message } of world.tick()) {
+    const encoded = JSON.stringify(message);
+    for (const socket of recipients) send(socket, encoded);
+  }
+}, 1000 / TICK_HZ);
+
+const heartbeatInterval = setInterval(() => {
+  for (const socket of wss.clients) {
+    if (!socket.isAlive) {
+      socket.terminate();
+      continue;
+    }
+    socket.isAlive = false;
+    socket.ping();
+  }
+}, 30_000);
+
+function shutdown() {
+  console.log("Shutting down...");
+  clearInterval(tickInterval);
+  clearInterval(heartbeatInterval);
+  for (const socket of wss.clients) socket.terminate();
+  wss.close();
+  server.close(() => process.exit(0));
+}
+process.once("SIGINT", shutdown);
+process.once("SIGTERM", shutdown);
+
+server.listen(PORT, HOST, () => {
+  console.log(`Clutcher MP v0.1 listening on http://${HOST}:${PORT}`);
+  console.log(`WebSocket endpoint: ws://${HOST}:${PORT}/ws`);
+});

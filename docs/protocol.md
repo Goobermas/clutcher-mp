@@ -1,18 +1,22 @@
-# Wire protocol v1
+# Clutcher MP — WebSocket Protocol v1
 
-Transport: WebSocket at `/ws`. UTF-8 JSON messages, with a `type` discriminator in snake_case. The server authoritatively stores player positions; clients send **inputs**, never absolute positions.
+Connect to `/ws`. All messages are UTF-8 JSON objects with a `type` field. The Rust prototype has been removed; this is a **new Node.js implementation**.
 
 ## Client → server
+
+Join a room (creates it if it does not exist):
 
 ```json
 {"type":"join_room","room":"lobby"}
 ```
 
+Send a movement direction (not an absolute position):
+
 ```json
 {"type":"input","x":1,"y":0}
 ```
 
-Both x and y must be finite numbers between -1 and 1. Diagonal inputs are normalized server-side. Inputs apply to the player's movement during each server tick.
+Ping:
 
 ```json
 {"type":"ping","nonce":123456}
@@ -20,47 +24,42 @@ Both x and y must be finite numbers between -1 and 1. Diagonal inputs are normal
 
 ## Server → client
 
-After connecting:
+On connection:
 
 ```json
 {"type":"welcome","id":"<uuid>","protocol_version":1,"tick_hz":20}
 ```
 
-After joining a room:
+After joining:
 
 ```json
 {"type":"joined","room":"lobby"}
 ```
 
-Server snapshots (20 per second in the MVP):
+At 20 Hz while rooms exist:
 
 ```json
-{"type":"snapshot","room":"lobby","tick":42,"players":[{"id":"<uuid>","x":12.0,"y":6.0}]}
+{"type":"snapshot","room":"lobby","tick":42,"players":[{"id":"<uuid>","x":12,"y":6}]}
 ```
 
-Ping response:
+For ping / validation:
 
 ```json
 {"type":"pong","nonce":123456}
 ```
 
-Validation response:
-
 ```json
-{"type":"error","message":"join a room before sending input"}
+{"type":"error","message":"Join a room before sending movement."}
 ```
 
-## Limits / behavior
+## Limits
 
-- Room IDs: 1–32 ASCII letters, numbers, `-`, or `_`.
-- Up to 16 connected players per room.
-- JSON WebSocket frames max 2 KiB; max 100 text messages/second per connection.
-- Outgoing per-client message queue is bounded to 32. Snapshots can be dropped for a slow client.
-- Positions are clamped to the square from -1000 to +1000 on each axis.
-- On disconnect, the player's membership is removed. Empty rooms are removed.
-- A join request to a new room atomically changes membership if the destination has room.
-- For now, all rooms exist in memory. No authentication, persistence, combat, reconnect token, or TLS termination is provided.
+- 16 players per room, 100 rooms per server, room name 1–32 ASCII letters/digits/`-`/`_`.
+- 20 server ticks/s, speed 120 coordinate units/s, playable coordinates -1000..1000.
+- Diagonal input normalization, rejected non-finite/out-of-range inputs.
+- Message payload up to 2 KiB, 100 messages/second/connection.
+- WebSocket ping/pong heartbeat every 30 seconds; close unresponsive clients.
+- Slow clients skip snapshots if their pending WebSocket buffer exceeds 256 KiB.
+- Rooms exist only in memory; closing the connection removes the player and empty rooms.
 
-## Next protocol improvements
-
-Add input sequence numbers, interpolation timestamps, authenticated identity, heartbeats/timeouts, explicit join/leave events, movement reconciliation, and binary messages if bandwidth requires it.
+This is a development prototype: there is **no login, TLS termination, matchmaking, combat, collision or persistence**. Do not expose it publicly without configuring access controls and WSS.

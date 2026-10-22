@@ -1,64 +1,68 @@
 # Clutcher MP
 
-A **brand-new Rust multiplayer backend** built from scratch for a future Clutcher multiplayer client. This repository does not reuse any old multiplayer server or client code.
+Fresh Node.js multiplayer server built from scratch for a browser-based game. **No Rust or Cargo required.**
 
-The first milestone is intentionally small: two browser tabs join the same room and watch each other move.
+The v0.1 milestone is intentionally simple: two browser clients join the same room and see each other's movements on a canvas test page.
 
 ## Requirements
 
-- Recent stable [Rust](https://rustup.rs/) toolchain with Cargo
-- A modern browser
+- Node.js **22 or newer**
+- npm
 
-## Start the server
-
-```bash
-cargo run
-```
-
-Open **http://127.0.0.1:3000** in two tabs, then:
-
-1. Click **Connect** in each tab.
-2. Click **Join room** using the same room name (default: `lobby`).
-3. Click one tab and move the blue player with **WASD**. The other tab should display it as yellow.
-4. Disconnect or close one tab; the other should stop displaying that player on the next snapshot.
-
-The Rust HTTP server serves the test client at `/`, a basic health endpoint at `/health`, and the WebSocket endpoint at `/ws`.
-
-## Configuration
-
-Defaults: `HOST=127.0.0.1`, `PORT=3000`. Set variables in your shell before running:
+Check:
 
 ```bash
-# Linux/macOS
-HOST=0.0.0.0 PORT=3000 cargo run
+node --version
+npm --version
 ```
 
-```powershell
-# Windows PowerShell
-$env:HOST = "0.0.0.0"
-$env:PORT = "3000"
-cargo run
+## Run locally (including on Ubuntu)
+
+```bash
+npm install
+npm start
 ```
 
-Binding to `0.0.0.0` permits other devices on your network to connect (subject to firewall rules). This development server has **no authentication or TLS**; don't expose it to the public internet as-is.
+By default the server listens on `http://127.0.0.1:3000`.
+
+Open it in **two browser tabs**. Click **Connect** and **Join room** in both tabs (room name `lobby`), then use **WASD** in either tab. Your player is blue and other players are yellow.
+
+WebSocket endpoint: `ws://127.0.0.1:3000/ws`
+
+Health endpoint: `http://127.0.0.1:3000/health`
+
+## Running on a VPS
+
+For access beyond the VPS itself, bind to all network interfaces:
+
+```bash
+HOST=0.0.0.0 PORT=3000 npm start
+```
+
+Then use an SSH tunnel for safe initial testing from your own computer:
+
+```bash
+ssh -L 3000:127.0.0.1:3000 ubuntu@YOUR_VPS_IP
+```
+
+If you use that tunnel, leave the server's `HOST` at `127.0.0.1`, and open `http://127.0.0.1:3000` on your own computer. Avoid exposing port 3000 to the internet at this prototype stage: there is no authentication or encryption. Configure a reverse proxy with HTTPS/WSS and access controls before public deployment.
 
 ## Development
 
 ```bash
-cargo fmt
-cargo test
-cargo clippy --all-targets
+npm test
+npm run dev
 ```
 
-The networking protocol is documented in [docs/protocol.md](docs/protocol.md). The roadmap is in [TODO.md](TODO.md).
+The server is written in plain JavaScript (no TypeScript build). Networking uses the [ws](https://github.com/websockets/ws) package and Node's built-in HTTP server.
 
-## Current scope
+### Files
 
-- Rust + Tokio + Axum WebSockets
-- In-memory rooms, max 16 players each
-- Server-side movement simulation at 20 ticks/second
-- JSON input and state snapshots
-- Input validation, rate limit, bounded send buffers, and disconnect cleanup
-- Browser-based canvas test client (not integrated into the actual game)
+- `server/index.js` — HTTP and WebSocket server, connections, validation and broadcasts
+- `server/world.js` — in-memory rooms, movement and authoritative snapshots
+- `client/test.html` — standalone browser/networking test
+- `tests/world.test.js` — built-in Node tests
+- `docs/protocol.md` — message formats and limits
+- `TODO.md` — milestones
 
-**Not built yet:** weapon synchronization, collision, game modes, persistence, authentication, reconnection, anti-cheat, and production deployment.
+**Not implemented:** Clutcher game-client integration, health/damage, weapons, collision, matchmaking, user authentication, production hosting.

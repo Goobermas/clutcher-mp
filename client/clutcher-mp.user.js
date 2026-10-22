@@ -47,6 +47,17 @@
   let retryDelay = 1500;
   const heldKeys = new Set();
 
+  // These are document-level game elements, outside our shadow DOM.
+  const nativeStyles = document.createElement('style');
+  nativeStyles.id = 'clutcher-mp-native-styles';
+  nativeStyles.textContent = [
+    '#teamsel { display: none !important; pointer-events: none !important; }',
+    '#opt-outfit { display: none !important; }',
+    '#opt-botson button[data-v="1"] { display: none !important; }',
+    '#menu .srow.botdep { display: none !important; }'
+  ].join('\n');
+  document.documentElement.appendChild(nativeStyles);
+
   const host = document.createElement('div');
   host.id = 'clutcher-mp-bridge';
   host.style.cssText = 'position:fixed;right:14px;bottom:14px;z-index:2147483647;';
@@ -233,7 +244,7 @@
   // opens manual team selection). Ask the server to assign a team first.
   document.addEventListener('click', (event) => {
     const target = event.target;
-    if (!(target instanceof Element) || !target.closest('#btn-play')) return;
+    if (!target?.closest?.('#btn-play')) return;
     event.preventDefault();
     event.stopPropagation();
     event.stopImmediatePropagation();
@@ -253,7 +264,7 @@
   // Ignore manual team-card clicks even if some other game code shows the cards.
   document.addEventListener('click', (event) => {
     const element = event.target;
-    if (!(element instanceof Element) || !element.closest('#teamsel [data-team]')) return;
+    if (!element?.closest?.('#teamsel [data-team]')) return;
     event.preventDefault();
     event.stopImmediatePropagation();
   }, true);

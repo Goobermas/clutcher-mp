@@ -52,6 +52,17 @@
 
 ## Phase 4 — Gameplay
 
+- [x] Add per-room server-owned shared 5s countdown / 10min round / 5s result timer.
+- [x] Gate match start on one loaded CT and T; pause/reset countdown when teams become unready.
+- [x] Broadcast `match_state` with timer, round, and CT/T scores.
+- [x] Display server clock/score in Tampermonkey panel and native Defusal HUD.
+- [x] Prevent the native Defusal controller from ending/awarding its own rounds.
+- [x] Add ready/timer/score unit tests and a test-page match clock.
+- [ ] Verify native HUD updates in two real browser game sessions.
+- [ ] Add server-authoritative networked kills and TDM scoring.
+- [ ] Add C4 plant/defuse state and proper server-determined round victories.
+
+
 - [ ] Design server-side health, combat, weapon and hit detection rules.
 - [ ] Add match lifecycle: lobby → warmup → live → results.
 - [ ] Implement scores, teams, rounds, respawning and win conditions.

@@ -3,6 +3,8 @@ export const MOVE_SPEED = 120;
 export const MAX_PLAYERS_PER_ROOM = 16;
 export const MAX_ROOMS = 100;
 export const WORLD_LIMIT = 1000;
+export const MAPS = Object.freeze(["oasis", "dusker"]);
+export const MODES = Object.freeze(["defusal", "dm"]);
 
 export function validRoomName(roomId) {
   return typeof roomId === "string" && /^[a-zA-Z0-9_-]{1,32}$/.test(roomId);
@@ -18,41 +20,66 @@ export function normalizedInput(x, y) {
   return length > 1 ? { x: x / length, y: y / length } : { x, y };
 }
 
+// Assign the next joiner to the smaller side. Never trust a client-supplied team.
+export function balancedTeam(players) {
+  let ct = 0, t = 0;
+  for (const player of players.values()) {
+    if (player.team === "CT") ct++;
+    else if (player.team === "T") t++;
+  }
+  return ct <= t ? "CT" : "T";
+}
+
 export class World {
   constructor() {
     this.rooms = new Map();
+    this.roomSettings = new Map();
     this.tickNumber = 0;
   }
 
-  join(session, roomId, socket) {
+  join(session, roomId, socket, options = {}) {
     if (!validRoomName(roomId)) {
       throw new Error("Room names must be 1–32 letters, numbers, - or _.");
     }
-    if (session.roomId === roomId) return;
+    if (session.roomId === roomId) {
+      const player = this.rooms.get(roomId)?.get(session.id);
+      const settings = this.roomSettings.get(roomId);
+      if (player && settings) return { ...settings, team: player.team };
+    }
 
     const target = this.rooms.get(roomId);
     if (target && target.size >= MAX_PLAYERS_PER_ROOM) {
       throw new Error("Room is full.");
     }
     if (!target && this.rooms.size >= MAX_ROOMS) {
-      // Switching away from the last member of a room makes one slot available.
       const old = this.rooms.get(session.roomId);
       if (!old || old.size !== 1) throw new Error("Room limit reached.");
     }
 
-    this.leave(session);
+    // New rooms take their map/mode from the first player. Later joiners inherit it.
+    // No player gets to choose their team.
+    const map = MAPS.includes(options?.map) ? options.map : "oasis";
+    const mode = MODES.includes(options?.mode) ? options.mode : "defusal";
 
+    this.leave(session);
     const room = this.rooms.get(roomId) ?? new Map();
-    if (!this.rooms.has(roomId)) this.rooms.set(roomId, room);
+    if (!this.rooms.has(roomId)) {
+      this.rooms.set(roomId, room);
+      this.roomSettings.set(roomId, { map, mode });
+    }
+    const team = balancedTeam(room);
     room.set(session.id, {
       id: session.id,
       socket,
+      team,
       x: room.size * 30,
       y: 0,
       inputX: 0,
       inputY: 0
     });
     session.roomId = roomId;
+    session.team = team;
+    return { ...this.roomSettings.get(roomId), team };
   }
 
   leave(session) {
@@ -60,9 +87,13 @@ export class World {
     const room = this.rooms.get(session.roomId);
     if (room) {
       room.delete(session.id);
-      if (room.size === 0) this.rooms.delete(session.roomId);
+      if (room.size === 0) {
+        this.rooms.delete(session.roomId);
+        this.roomSettings.delete(session.roomId);
+      }
     }
     session.roomId = null;
+    session.team = null;
   }
 
   setInput(session, x, y) {
@@ -91,7 +122,7 @@ export class World {
           type: "snapshot",
           room: roomId,
           tick: this.tickNumber,
-          players: [...room.values()].map(({ id, x, y }) => ({ id, x, y }))
+          players: [...room.values()].map(({ id, team, x, y }) => ({ id, team, x, y }))
         }
       });
     }

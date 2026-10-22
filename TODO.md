@@ -52,6 +52,13 @@
 
 ## Phase 4 — Gameplay
 
+- [x] v0.5.1: hook real `weapons.startReload()` instead of nonexistent `weapons.reload()`.
+- [x] v0.5.1: queue inspect/reload while remote world weapon is loading.
+- [x] v0.5.1: add fallback held-weapon animation for inspect and absent reload clips.
+- [x] v0.5.1: add 4 automated regression tests for source actions and remote rigs.
+- [ ] Verify native reload clips and inspect motion inside two live game sessions.
+
+
 - [x] Replicate equipped weapon/knife skins, kit, wear and seed.
 - [x] Replicate glove models and glove paint/float data.
 - [x] Handle non-default knives through the agent's world-model API.

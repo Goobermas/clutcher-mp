@@ -77,6 +77,38 @@ export class RoomMatch {
 
   get rules() { return RULES[this.mode] ?? RULES.defusal; }
 
+  progressObjective(now,room,map) {
+    if (this.mode!=="defusal") return;
+    const o=this.objective;
+    if (["countdown","live"].includes(this.phase)) this.assignCarrier(room);
+    if (this.phase==="live" && o.planter) {
+      const player=room.get(o.planter);
+      const p=player?.gameState;
+      if (!p?.alive || !player.ready || player.team!=="T" ||
+          o.carrier!==player.id || now-o.plantSeen>450 ||
+          Math.hypot(p.vx,p.vz)>.35 || p.airborne ||
+          siteForPosition(map,p)!==o.site) {
+        o.planter=null; o.plantStart=null; o.site=null;
+      } else if (now-o.plantStart>=this.rules.plantMs) {
+        o.placed={x:p.x,y:p.y,z:p.z,site:o.site,by:player.id,at:now};
+        o.carrier=null; o.planter=null; o.plantStart=null;
+        this.transition("planted",now+this.rules.bombMs);
+      }
+    }
+    if (this.phase==="planted" && o.defuser) {
+      const player=room.get(o.defuser),p=player?.gameState;
+      if (!p?.alive || !player.ready || player.team!=="CT" ||
+          now-o.defuseSeen>450 || Math.hypot(p.vx,p.vz)>.35 || p.airborne ||
+          Math.hypot(p.x-o.placed.x,p.z-o.placed.z)>1.8 ||
+          Math.abs(p.y-o.placed.y)>2.5) {
+        o.defuser=null; o.defuseStart=null;
+      } else if (now-o.defuseStart>=this.rules.defuseMs) {
+        this.winner="CT"; this.score.CT++;
+        this.transition("ended",now+this.rules.endMs);
+      }
+    }
+  }
+
   transition(phase, endsAt = null) {
     if (this.phase === phase && this.endsAt === endsAt) return;
     this.phase = phase;

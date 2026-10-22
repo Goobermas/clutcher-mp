@@ -116,3 +116,44 @@ Server-owned state machine:
 For clock presentation, each client receives `remainingMs`, predicts the display countdown using its monotonic clock until the next update, and corrects on every server snapshot. The Tampermonkey client mirrors score, round, and remaining time into the game's native Defusal controller and displays the state in its multiplayer HUD.
 
 **Protocol extension is backwards-incompatible for older clients** which never send `ready` and consequently cannot start a match. Update the server and userscripts together.
+
+## Actual game mode timings (v0.4)
+
+Verified against the supplied Clutcher HTML / main.js:
+
+| Game mode | Match / round clock | Freeze | Results | Win rule |
+| --- | --- | --- | --- | --- |
+| Bomb Defuse | 115.2s (approximately 1:55) | 5s | 5s | First to 8 of maximum 15 rounds |
+| Team Deathmatch | 600s (10:00) | None | 6s | Highest kills at timeout; **kill scoring not implemented** |
+
+Bomb Defuse game constants include 40s bomb fuse, 3.2s plant, 10s defuse, and 5s defuse with kit. **These objective actions are not yet simulated on this multiplayer server**. Only a Defusal round without a bomb plant awards CT on clock expiration. No halftime side swap is performed in this game's current preset.
+
+The server also emits `match_end` on the eighth Defusal round won (or round limit), with an 8s end phase.
+
+## Remote player presentation (v0.4)
+
+A player whose game is loaded sends transforms about 20 times per second:
+
+```json
+{"type":"player_state","name":"Player","x":12.2,"y":1,"z":-4.4,"yaw":1.2,"pitch":0.1,"vx":0,"vz":0,"weapon":"ak47","crouch":false,"airborne":false,"alive":true}
+```
+
+The server validates and embeds it into the room's `snapshot.players[].game`. This is **client-reported visual data, not authoritative physics**. The game client can use it to drive an AI-disabled remote bot mesh.
+
+Small one-shot visual action events:
+
+```json
+{"type":"action","kind":"fire","dir":[0,0,-1]}
+```
+
+Valid `kind` values: `fire` (requires normalized-ish 3-vector direction), `reload`, `jump`, `land`, `equip`.
+
+The server forwards the event to *other* clients in the same room:
+
+```json
+{"type":"player_action","id":"<sender_uuid>","kind":"fire","dir":[0,0,-1]}
+```
+
+This path only drives character presentation (gun shot/tracer, reload, jump/landing cue). No client can award kills or score points with it. Real hit detection and damage validation are separate work.
+
+**Old v0.3 assumption superseded:** Defusal no longer uses the placeholder 10:00 clock; TDM alone uses 10:00. Both server and userscript must be updated together.

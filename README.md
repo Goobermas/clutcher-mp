@@ -1,6 +1,6 @@
 # Clutcher MP
 
-Fresh Node.js multiplayer server built from scratch for a browser-based game. **No Rust or Cargo required.** The v0.2 userscript also starts Clutcher's actual map with **0 bots** and **server-assigned CT/T teams**.
+Fresh Node.js multiplayer server built from scratch for a browser-based game. **No Rust or Cargo required.** The v0.3 userscript loads Clutcher's real map with **0 bots**, **server-assigned CT/T teams**, and a **shared match clock and score**.
 
 The networking v0.1 milestone is intentionally simple: two browser clients join the same room and see each other's movements on a canvas test page.
 
@@ -49,7 +49,7 @@ If you use that tunnel, leave the server's `HOST` at `127.0.0.1`, and open `http
 
 ## Tampermonkey prototype client
 
-Install [client/clutcher-mp.user.js](client/clutcher-mp.user.js) into Tampermonkey to connect from the Clutcher HTTPS game page. The userscript has a room/connection HUD and an independent player-position minimap. The native **PLAY** button now launches the game map directly, with bots disabled and CT/T automatically assigned by the server. Remote 3D player models and real gameplay state synchronization are **not implemented yet**.
+Install [client/clutcher-mp.user.js](client/clutcher-mp.user.js) into Tampermonkey to connect from the Clutcher HTTPS game page. The userscript has a room/connection HUD and an independent player-position minimap. The native **PLAY** button now launches the game map directly, with bots disabled and CT/T automatically assigned by the server. Remote 3D player models and combat synchronization are **not implemented yet**. The server only increments the CT score for a Defusal round timing out; TDM scores remain zero until combat networking exists.
 
 **Existing WSS proxy:** The script now targets `wss://mp.sillyhack.com/ws` via your existing HTTPS/WSS reverse proxy (public port 443). Node.js stays on internal port `8085`. Tampermonkey matches both HTTP and HTTPS Clutcher pages. The previous default `:8085` WSS URL is automatically migrated. See [setup and limitations](docs/tampermonkey.md).
 
@@ -61,6 +61,14 @@ npm run dev
 ```
 
 The server is written in plain JavaScript (no TypeScript build). Networking uses the [ws](https://github.com/websockets/ws) package and Node's built-in HTTP server.
+
+### Shared match clock and score
+
+When at least one CT and one T have loaded the map, the server starts a five-second freeze countdown, followed by a shared ten-minute round and five-second result period. Each client uses the `match_state` broadcast to render the same time, round, and CT/T totals. Returning to menu stops that player's readiness.
+
+In the current prototype, **only Defusal timeout awards a point** (CT wins when time runs out). TDM and all kill/bomb outcomes need a new server-side combat/objective protocol; please don't mistake the synced score display for finished game scoring.
+
+The small test page has a **Ready** button to simulate map loading and confirm the clock and score agree across two tabs. See [wire protocol](docs/protocol.md).
 
 ### Files
 

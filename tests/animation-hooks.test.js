@@ -96,7 +96,7 @@ test("native third-person reload action uses the bot renderer's weapon id", () =
   let called;
   const game = {};
   const remote = { alive:true,weapon:"ak47",crouchT:0,
-    cs2Agent:{_weaponId:"weapon_ak47",loco:{},reload(...args){called=args;return 2.7;}}
+    cs2Agent:{_weaponId:"weapon_ak47",loco:{},heldWeapon:{},reload(...args){called=args;return 2.7;}}
   };
   const models = new Map([["peer", remote]]);
   const remoteAction = new Function("gameInstance","remoteModels","deferRemoteAction",
@@ -106,4 +106,19 @@ test("native third-person reload action uses the bot renderer's weapon id", () =
   )(() => game,models,()=>{},()=>true,{now:()=>3000});
   remoteAction({id:"peer",kind:"reload",duration:2.7,empty:true});
   assert.deepEqual(called,["weapon_ak47",2.7,{empty:true,crouched:false}]);
+});
+
+test("reload events before the remote weapon finishes loading are deferred", () => {
+  const deferred = [];
+  const models = new Map([["peer", {
+    alive:true,weapon:"ak47",crouchT:0,
+    cs2Agent:{loco:{},heldWeapon:null}
+  }]]);
+  const remoteAction = new Function("gameInstance","remoteModels","deferRemoteAction",
+    "startRemoteInspect","performance",section("  function remoteAction(message",
+      "  function sendVisualAction(") + "\nreturn remoteAction;"
+  )(() => ({}),models,(_,message) => deferred.push(message),()=>true,{now:()=>10});
+  remoteAction({id:"peer",kind:"inspect",weapon:"ak47"});
+  remoteAction({id:"peer",kind:"reload",weapon:"ak47",duration:2});
+  assert.deepEqual(deferred.map(x => x.kind),["inspect","reload"]);
 });

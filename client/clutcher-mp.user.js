@@ -479,7 +479,20 @@
     if (!mesh?.rotation || !mesh?.position) return false;
     stopRemoteInspect(bot);
     bot._mpInspect = {
-      mesh, start:performance.now(), duration:2400,
+      mesh, kind:'inspect', start:performance.now(), duration:2400,
+      rotation:{x:mesh.rotation.x,y:mesh.rotation.y,z:mesh.rotation.z},
+      position:{x:mesh.position.x,y:mesh.position.y,z:mesh.position.z}
+    };
+    return true;
+  }
+
+  function startRemoteReloadFallback(bot, duration) {
+    const mesh = bot?.cs2Agent?.heldWeapon;
+    if (!mesh?.rotation || !mesh?.position) return false;
+    stopRemoteInspect(bot);
+    bot._mpInspect = {
+      mesh, kind:'reload', start:performance.now(),
+      duration:Math.min(15000,Math.max(600,Number(duration || 2.5)*1000)),
       rotation:{x:mesh.rotation.x,y:mesh.rotation.y,z:mesh.rotation.z},
       position:{x:mesh.position.x,y:mesh.position.y,z:mesh.position.z}
     };
@@ -499,10 +512,18 @@
       return;
     }
     const tilt = Math.sin(Math.PI*t);
-    inspect.mesh.rotation.x = inspect.rotation.x - tilt*.24;
-    inspect.mesh.rotation.y = inspect.rotation.y + tilt*.65;
-    inspect.mesh.rotation.z = inspect.rotation.z + Math.sin(2*Math.PI*t)*.20;
-    inspect.mesh.position.y = inspect.position.y + tilt*.075;
+    if (inspect.kind === 'reload') {
+      // A visible body-held weapon movement for assets without reload actions.
+      inspect.mesh.rotation.x = inspect.rotation.x + tilt*.27;
+      inspect.mesh.rotation.y = inspect.rotation.y - tilt*.16;
+      inspect.mesh.rotation.z = inspect.rotation.z - tilt*.35;
+      inspect.mesh.position.y = inspect.position.y - tilt*.11;
+    } else {
+      inspect.mesh.rotation.x = inspect.rotation.x - tilt*.24;
+      inspect.mesh.rotation.y = inspect.rotation.y + tilt*.65;
+      inspect.mesh.rotation.z = inspect.rotation.z + Math.sin(2*Math.PI*t)*.20;
+      inspect.mesh.position.y = inspect.position.y + tilt*.075;
+    }
   }
 
   function deferRemoteAction(bot, message) {
@@ -566,10 +587,12 @@
           const result = agent?.reload?.(weaponId, message.duration || 2.5, {
             empty: !!message.empty, crouched: !!bot.crouchT
           });
-          bot._mpReloading = true;
+          const fallback = result ? false : startRemoteReloadFallback(bot,message.duration);
+          bot._mpReloading = !!(result || fallback);
           bot._mpLastReloadAt = performance.now();
           if (!result) {
-            console.debug('[Clutcher MP] No remote reload clip for',weaponId);
+            console.debug('[Clutcher MP] No native reload clip for',weaponId,
+              fallback ? '— procedural fallback active' : '— model pending');
           }
           break;
         }

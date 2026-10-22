@@ -298,6 +298,7 @@
         model.alive = true;
         model.health = 100;
         model.cs2Agent?.revive?.();
+        if (model.cs2Agent?.root) model.cs2Agent.root.visible = true;
         if (model.shadow) model.shadow.visible = true;
       } else if (!data.alive && model.alive) {
         model.alive = false;
@@ -903,12 +904,13 @@
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvas.width, y); ctx.stroke();
     }
     const self = players.find((p) => p.id === playerId);
-    const centerX = self?.x ?? 0;
-    const centerY = self?.y ?? 0;
+    // In a loaded match, show real map X/Z rather than the 2D canvas-test coordinates.
+    const centerX = self?.game?.x ?? self?.x ?? 0;
+    const centerY = self?.game?.z ?? self?.y ?? 0;
     ctx.font = '10px system-ui';
     for (const player of players) {
-      const x = canvas.width / 2 + (player.x - centerX) * 0.45;
-      const y = canvas.height / 2 + (player.y - centerY) * 0.45;
+      const x = canvas.width / 2 + ((player.game?.x ?? player.x) - centerX) * 0.45;
+      const y = canvas.height / 2 + ((player.game?.z ?? player.y) - centerY) * 0.45;
       if (x < 4 || x > canvas.width - 4 || y < 4 || y > canvas.height - 4) continue;
       const isSelf = player.id === playerId;
       ctx.fillStyle = player.team === 'CT' ? '#38bdf8' : '#fbbf24';

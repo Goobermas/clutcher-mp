@@ -92,7 +92,8 @@ export class World {
       y: 0,
       inputX: 0,
       inputY: 0,
-      ready: false
+      ready: false,
+      gameState: null
     });
     session.roomId = roomId;
     session.team = team;
@@ -119,6 +120,62 @@ export class World {
     const player = this.rooms.get(session.roomId)?.get(session.id);
     if (!player) throw new Error("Join a room before readying.");
     player.ready = ready;
+    if (!ready) player.gameState = null;
+  }
+
+  // 3D movement is presentation telemetry from the browser, not proof of
+  // legitimate game physics or hits. Server validates size and value bounds.
+  setPlayerState(session, state) {
+    const player = this.rooms.get(session.roomId)?.get(session.id);
+    if (!player?.ready) throw new Error("Load the game before sending player state.");
+    if (!state || typeof state !== "object" || Array.isArray(state)) {
+      throw new Error("Invalid player state.");
+    }
+    const keys = ["x", "y", "z", "yaw", "pitch", "vx", "vz"];
+    if (!keys.every(key => Number.isFinite(state[key]))) {
+      throw new Error("Player coordinates and angles must be finite.");
+    }
+    if (["x", "y", "z"].some(key => Math.abs(state[key]) > 4096) ||
+        ["vx", "vz"].some(key => Math.abs(state[key]) > 100) ||
+        Math.abs(state.yaw) > 1000 || Math.abs(state.pitch) > 4) {
+      throw new Error("Player state outside permitted bounds.");
+    }
+    const weapon = typeof state.weapon === "string" && /^[a-z0-9_]{1,36}$/.test(state.weapon)
+      ? state.weapon : "knife";
+    const name = typeof state.name === "string"
+      ? state.name.replace(/[\x00-\x1f\x7f]/g, "").slice(0, 24) : "Player";
+    player.gameState = {
+      name: name || "Player",
+      x: state.x, y: state.y, z: state.z,
+      yaw: state.yaw, pitch: state.pitch, vx: state.vx, vz: state.vz,
+      crouch: state.crouch === true, airborne: state.airborne === true,
+      alive: state.alive === true, weapon
+    };
+  }
+
+  relayAction(session, payload) {
+    const room = this.rooms.get(session.roomId);
+    const actor = room?.get(session.id);
+    if (!actor?.ready || !actor.gameState) throw new Error("Not in a loaded match.");
+    if (!payload || !["fire", "reload", "jump", "land", "equip"].includes(payload.kind)) {
+      throw new Error("Unsupported player action.");
+    }
+    const message = { type: "player_action", id: session.id, kind: payload.kind };
+    if (payload.kind === "fire") {
+      if (!Array.isArray(payload.dir) || payload.dir.length !== 3 ||
+          !payload.dir.every(n => Number.isFinite(n) && Math.abs(n) <= 1.1)) {
+        throw new Error("Invalid shot direction.");
+      }
+      message.dir = payload.dir;
+    }
+    if (payload.kind === "reload" && Number.isFinite(payload.duration)) {
+      message.duration = Math.max(0.1, Math.min(15, payload.duration));
+    }
+    return {
+      recipients: [...room.values()].filter(player => player.id !== session.id)
+        .map(player => player.socket),
+      message
+    };
   }
 
   matchState(roomId, now = performance.now()) {
@@ -164,7 +221,8 @@ export class World {
           type: "snapshot",
           room: roomId,
           tick: this.tickNumber,
-          players: [...room.values()].map(({ id, team, x, y }) => ({ id, team, x, y }))
+          players: [...room.values()].map(({ id, team, x, y, gameState }) =>
+            ({ id, team, x, y, ...(gameState ? { game: gameState } : {}) }))
         }
       });
     }

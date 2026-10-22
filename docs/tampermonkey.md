@@ -33,6 +33,14 @@ The new Tampermonkey userscript reads the actual game entry points from the supp
 
 **Important:** Run the **updated server** with `git pull && npm install && npm test && HOST=127.0.0.1 PORT=8085 npm start` (adapt HOST to your proxy's backend route). Older server builds do not send team/map/mode in `joined` and will be rejected by v0.2 client.
 
+## Timer and score synchronization (v0.3)
+
+The Node server is the authority for `match_state` messages at 4 Hz. The userscript displays the CT/T score, match phase, round, and clock in its panel and mirrors the timer/round/score to the native game HUD when available. Clutcher's local round-ending logic is disabled while the multiplayer match is active to prevent singleplayer Defusal from overruling the server.
+
+The server starts a five-second countdown **only when one CT and one T have both clicked Play and completed loading**. Each round is ten minutes; a Defusal timeout awards CT one point, then the next round starts after five seconds. Returning to menu or disconnecting pauses the match until both sides are ready again.
+
+**Not implemented:** remote combat, legitimate TDM kill scoring, C4 interactions, T victories, and native 3D player synchronization. Full round scoring can only be implemented after these gameplay messages exist.
+
 ## Current limitations
 
 This is a **networking bridge/prototype**, not a full in-game multiplayer modification. It does *not* spawn game characters, read the game's real coordinates, or synchronize weapons/combat. The server itself only understands 2D test movement (`input: {x, y}`) and publishes simple 2D snapshots. Real gameplay integration needs a new mapping between actual game state and an expanded multiplayer protocol.

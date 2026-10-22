@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Clutcher MP - Multiplayer Bridge
 // @namespace    https://sillyhack.com/
-// @version      0.2.0
+// @version      0.3.0
 // @description  New Clutcher multiplayer WebSocket client (networking prototype)
 // @author       SillyHack
 // @match        *://clutcher.io/*
@@ -42,6 +42,12 @@
   let assignedMode = null;
   let pendingPlay = false;
   let launchBusy = false;
+  let matchState = null;
+  let matchDeadline = 0;
+  let isReady = false;
+  let activeGame = null;
+  let lastNativeHudAt = 0;
+  let lastPhaseSignature = '';
   let autoReconnect = true;
   let retryTimer = null;
   let retryDelay = 1500;
@@ -95,6 +101,13 @@
         border-radius: 5px; }
       .hint { margin: 6px 0 0; color: #8190a7; font-size: 11px; }
       .team { color: #8bd0ff; font-weight: 600; }
+      .match-line { display:flex;justify-content:space-between;gap:6px;padding:7px 8px;
+        background:#101b2b;border:1px solid #344256;border-radius:6px;margin-bottom:8px;
+        font-weight:700;font-size:13px; }
+      .match-line .time { color:#dce9ff; font-variant-numeric:tabular-nums; }
+      .match-line .ct { color:#68baff; }
+      .match-line .t { color:#f5c15c; }
+      .phase { font-size:11px;color:#b2bfd1;margin:0 0 7px 0; }
       /* Native team cards are not used in server-assigned multiplayer. */
       #teamsel { display: none !important; }
     </style>
@@ -120,6 +133,8 @@
         </div>
         <div id="mpStatus" role="status">Disconnected</div>
         <div class="stats"><span>Your team: <b class="team" id="mpTeam">—</b></span><span id="mpMapName">No map</span></div>
+        <div class="match-line"><span class="ct" id="mpCT">CT 0</span><span class="time" id="mpClock">—:——</span><span class="t" id="mpT">0 T</span></div>
+        <div class="phase" id="mpPhase">Waiting for match state</div>
         <div class="stats"><span id="mpPlayers">0 players</span><span id="mpPing">Ping: —</span></div>
         <canvas id="mpMap" width="236" height="126"></canvas>
         <p class="hint">Play starts the real map with 0 bots and an assigned team. Remote positions are still a test overlay, not in-game models.</p>
@@ -162,6 +177,158 @@
     }, delay);
     retryDelay = Math.min(retryDelay * 2, 20000);
   }
+
+
+  function secondsRemaining() {
+    if (!matchState) return 0;
+    if (matchState.phase === 'waiting') return matchState.roundSeconds || 600;
+    return Math.max(0, (matchDeadline - performance.now()) / 1000);
+  }
+
+  function formatClock(seconds) {
+    const total = Math.max(0, Math.ceil(seconds));
+    return Math.floor(total / 60) + ':' + String(total % 60).padStart(2, '0');
+  }
+
+  function clearMatch() {
+    matchState = null;
+    matchDeadline = 0;
+    isReady = false;
+    lastPhaseSignature = '';
+    $('mpClock').textContent = '—:——';
+    $('mpCT').textContent = 'CT 0';
+    $('mpT').textContent = '0 T';
+    $('mpPhase').textContent = 'Waiting for match state';
+  }
+
+  function markReady(ready) {
+    if (!joinedRoom || socket?.readyState !== WebSocket.OPEN || isReady === ready) return;
+    isReady = ready;
+    send({ type: 'ready', ready });
+  }
+
+  function lockNativeRoundLogic(game) {
+    if (activeGame === game && game.__clutcherMpClockLocked) return;
+    if (activeGame && activeGame !== game) releaseNativeRoundLogic();
+    if (!game || game.state !== 'playing') return;
+    if (!game.__clutcherMpClockLocked) {
+      game.__clutcherMpClockLocked = {
+        startRound: game.startRound,
+        endRound: game.endRound,
+        modeCtl: game.modeCtl,
+        modeUpdate: game.modeCtl?.update,
+        modeRoundEnd: game.modeCtl?.roundEnd,
+        modeNextRound: game.modeCtl?.nextRound,
+        modeMatchEnd: game.modeCtl?.matchEnd,
+        modeOnKill: game.modeCtl?.onKill
+      };
+      // The Node server owns round transitions. The native local game must
+      // not decide a winner because no enemy bots remain on either side.
+      game.startRound = function () {};
+      game.endRound = function () {};
+      if (game.modeCtl) {
+        game.modeCtl.update = function () {};
+        game.modeCtl.roundEnd = function () {};
+        game.modeCtl.nextRound = function () {};
+        game.modeCtl.matchEnd = function () {};
+        game.modeCtl.onKill = function () {};
+      }
+    }
+    game.roundActive = true;
+    activeGame = game;
+  }
+
+  function releaseNativeRoundLogic() {
+    const game = activeGame;
+    if (!game) return;
+    const native = game.__clutcherMpClockLocked;
+    if (native) {
+      game.startRound = native.startRound;
+      game.endRound = native.endRound;
+      if (native.modeCtl) {
+        native.modeCtl.update = native.modeUpdate;
+        native.modeCtl.roundEnd = native.modeRoundEnd;
+        native.modeCtl.nextRound = native.modeNextRound;
+        native.modeCtl.matchEnd = native.modeMatchEnd;
+        native.modeCtl.onKill = native.modeOnKill;
+      }
+      delete game.__clutcherMpClockLocked;
+    }
+    activeGame = null;
+  }
+
+  function applyMatchState(message) {
+    if (!joinedRoom || message.room !== joinedRoom) return;
+    if (!['waiting','countdown','live','ended'].includes(message.phase)) return;
+    if (!message.score || !Number.isFinite(message.remainingMs) ||
+        !Number.isFinite(message.round) || !Number.isFinite(message.roundSeconds) ||
+        !Number.isFinite(message.score.CT) || !Number.isFinite(message.score.T)) return;
+
+    // A new server message corrects drift; between broadcasts, use the local
+    // monotonic timer. No local client is allowed to set a score.
+    const previousRevision = matchState?.revision;
+    const previousRound = matchState?.round;
+    matchState = message;
+    matchDeadline = performance.now() + Math.max(0, message.remainingMs);
+    const phaseSignature = message.phase + ':' + message.round + ':' +
+      message.score.CT + ':' + message.score.T;
+    $('mpCT').textContent = 'CT ' + message.score.CT;
+    $('mpT').textContent = message.score.T + ' T';
+    $('mpPhase').textContent = message.phase.toUpperCase() + ' • Round ' + message.round +
+      (message.phase === 'waiting' ? ' • waiting for a loaded player on each side' :
+      message.phase === 'ended' && message.winner ? ' • ' + message.winner + ' wins' : '');
+    if (phaseSignature !== lastPhaseSignature ||
+        previousRevision !== message.revision || previousRound !== message.round) {
+      lastNativeHudAt = 0;
+      lastPhaseSignature = phaseSignature;
+    }
+    updateMatchPresentation();
+  }
+
+  function updateMatchPresentation() {
+    if (!matchState) return;
+    const time = secondsRemaining();
+    $('mpClock').textContent = formatClock(time);
+    const game = gameInstance();
+    if (!game || game.state !== 'playing' || !joinedRoom) {
+      if (isReady && joinedRoom) markReady(false);
+      if (activeGame) releaseNativeRoundLogic();
+      return;
+    }
+
+    lockNativeRoundLogic(game);
+    // Sync both the universal HUD timer and Defusal's native round controller.
+    game.roundActive = true;
+    game.roundTimeLeft = time;
+    game.frozen = matchState.phase === 'countdown';
+    game.respawnAllowed = assignedMode === 'dm';
+
+    const ctl = game.modeCtl;
+    if (assignedMode === 'defusal' && ctl) {
+      ctl.score ||= { CT: 0, T: 0 };
+      ctl.score.CT = matchState.score.CT;
+      ctl.score.T = matchState.score.T;
+      ctl.roundNum = matchState.round;
+      ctl.roundClock = time;
+      ctl.freezeT = matchState.phase === 'countdown' ? time : 0;
+      ctl.endT = matchState.phase === 'ended' ? time : 0;
+      ctl.state = matchState.phase === 'countdown' || matchState.phase === 'waiting'
+        ? 'freeze' : matchState.phase === 'ended' ? 'end' : 'live';
+    }
+
+    // Not every native HUD mode exposes team scores yet, so maintain the
+    // authoritative scoreboard in our panel as a reliable fallback.
+    const now = performance.now();
+    if (now - lastNativeHudAt >= 250) {
+      lastNativeHudAt = now;
+      try { game.hud?.updateScorebar?.(); } catch (error) {
+        console.debug('[Clutcher MP] Native scorebar update skipped:', error);
+      }
+    }
+  }
+
+  // Local presentation ticks do not advance score or game phases.
+  setInterval(updateMatchPresentation, 100);
 
   function chosenOption(group, fallback) {
     const selected = document.querySelector('#opt-' + group + ' button.sel');
@@ -231,6 +398,9 @@
       if (game._pending) game._pending.botCount = 0;
       await game.finishTeamSelect(assignedTeam);
       if (game.state !== 'playing') throw new Error('Game did not finish entering the map.');
+      lockNativeRoundLogic(game);
+      markReady(true);
+      updateMatchPresentation();
       setStatus('Playing ' + map + ' • ' + assignedTeam + ' • no bots', 'connected');
     } catch (error) {
       console.error('[Clutcher MP] Auto-launch failed:', error);
@@ -306,6 +476,7 @@
     playerId = null;
     players = [];
     assignedTeam = assignedMap = assignedMode = null;
+    clearMatch();
     updateStats();
     setStatus('Connecting to ' + endpoint.host + '...', 'connecting');
 
@@ -359,6 +530,13 @@
           setStatus('Room: ' + joinedRoom + ' • Team: ' + assignedTeam, 'connected');
           updateStats();
           if (pendingPlay) void launchAssignedGame();
+          else if (gameInstance()?.state === 'playing') {
+            lockNativeRoundLogic(gameInstance());
+            markReady(true);
+          }
+          break;
+        case 'match_state':
+          applyMatchState(message);
           break;
         case 'snapshot':
           if (message.room !== joinedRoom || !Array.isArray(message.players)) break;
@@ -393,6 +571,7 @@
       $('mpTeam').textContent = '—';
       $('mpMapName').textContent = 'No map';
       heldKeys.clear();
+      clearMatch();
       updateStats();
       draw();
       scheduleRetry();
@@ -413,6 +592,7 @@
     }
     joinedRoom = null;
     players = [];
+    clearMatch();
     send({
       type: 'join_room',
       room,
@@ -437,6 +617,8 @@
     assignedTeam = assignedMap = assignedMode = null;
     $('mpTeam').textContent = '—';
     $('mpMapName').textContent = 'No map';
+    clearMatch();
+    releaseNativeRoundLogic();
     updateStats();
     draw();
     setStatus('Disconnected');

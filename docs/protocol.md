@@ -157,3 +157,45 @@ The server forwards the event to *other* clients in the same room:
 This path only drives character presentation (gun shot/tracer, reload, jump/landing cue). No client can award kills or score points with it. Real hit detection and damage validation are separate work.
 
 **Old v0.3 assumption superseded:** Defusal no longer uses the placeholder 10:00 clock; TDM alone uses 10:00. Both server and userscript must be updated together.
+
+
+## Cosmetic state and detailed animation events (v0.5)
+
+The player's ordinary `player_state` (sent ~20 times/second) now includes:
+
+```json
+{
+  "type":"player_state",
+  "x":0,"y":1,"z":0,"yaw":0,"pitch":0,"vx":0,"vz":0,
+  "weapon":"knife","alive":true,"crouch":false,"airborne":false,
+  "scoped":false,"reloading":false,"walking":false,"firing":false,"melee":false,
+  "skin":{"weapon":"knife_butterfly","kit":123,"name":"Example","wmin":0.07},
+  "skinItem":{"wear":0.07,"seed":42},
+  "gloves":{"model":"glove_sport","kit":18,"item":{"wear":0.12,"seed":9}}
+}
+```
+
+Appearance is derived from the user's currently *equipped* loadout, not
+arbitrary keys supplied by unrelated players. Server filters metadata
+recursively (depth cap, number of keys, string cap, no prototype properties).
+The WebSocket input limit is 8 KiB per message.
+
+`action` now accepts these **visual-only** `kind` values:
+
+`fire`, `reload`, `jump`, `land`, `equip`, `inspect`,
+`knife`, `step`, `weapon_sound`, `grenade_prep`,
+`grenade_throw`, `scope`, `crouch`, `death`, `spawn`.
+
+Optional validated parameters:
+
+- `weapon`: short lowercase identifier
+- `reload`: `duration` seconds and `empty` flag
+- `knife`: `heavy` flag (stab instead of slash)
+- `scope`: `scoped` flag
+- `weapon_sound` or `step`: allowlisted audio `sound` id
+- `fire`: three-component finite direction `dir`
+
+The server relays these to other room members as `player_action`. These
+events animate models and audio only and **cannot award damage/kills**.
+Skin/item persistence, validated ownership and identical animation clips
+for every weapon are separate future milestones.

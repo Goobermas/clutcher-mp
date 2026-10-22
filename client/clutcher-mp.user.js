@@ -709,8 +709,9 @@
     if (typeof game.dealDamage === 'function') {
       const original = game.dealDamage;
       game.dealDamage = function(target) {
-        // Real network players must never take speculative local bot damage.
-        if (target?._clutcherMpRemote) return;
+        // Remote player models and replicated fire/HE effects are visuals.
+        // Server-authoritative damage is a separate feature.
+        if (target?._clutcherMpRemote || arguments[2]?._mpRemoteGrenadeOwner) return;
         return original.apply(this, arguments);
       };
     }

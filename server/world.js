@@ -179,6 +179,7 @@ export class World {
       alive: state.alive === true, weapon,
       ...appearance,
       scoped: state.scoped === true,
+      kit: state.kit === true,
       reloading: state.reloading === true,
       walking: state.walking === true,
       firing: state.firing === true,

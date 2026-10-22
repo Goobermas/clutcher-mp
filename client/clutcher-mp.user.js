@@ -749,6 +749,152 @@
     }
   }
 
+
+  const NADE_TYPES=new Set(['he','flash','smoke','molotov','incend','decoy']);
+
+  function releaseRemoteProjectile(id) {
+    const g=remoteProjectiles.get(id);
+    if (!g) return;
+    const mgr=gameInstance()?.grenadeMgr;
+    const idx=mgr?.list?.indexOf(g) ?? -1;
+    if (idx>=0) mgr.remove(idx);
+    remoteProjectiles.delete(id);
+  }
+
+  function clearProjectiles() {
+    for(const id of [...remoteProjectiles.keys()])releaseRemoteProjectile(id);
+    localProjectiles.clear();
+    remoteProjectiles.clear();
+    lastBombSignature=null;
+  }
+
+  function ensureRemoteProjectile(data) {
+    if (!data || !NADE_TYPES.has(data.grenade) || data.owner===playerId ||
+        ![data.x,data.y,data.z,data.vx,data.vy,data.vz].every(Number.isFinite)) return;
+    const game=gameInstance(),mgr=game?.grenadeMgr;
+    if(!mgr?.throwFrom || game.state!=='playing') return;
+    let g=remoteProjectiles.get(data.id);
+    if (!g) {
+      const owner={id:data.owner,team:data.team,_mpRemoteGrenadeOwner:true};
+      const oldSize=mgr.list.length;
+      try {
+        // Load the authentic grenade model and flight audio through Clutcher.
+        // The replicated projectile never executes its own collision physics.
+        mgr.throwFrom(owner,data.grenade,data.x,data.y,data.z,0,0,-1,1);
+      } catch(e) {
+        console.warn('[Clutcher MP] Remote grenade model:',e);
+        return;
+      }
+      g=mgr.list[oldSize];
+      if(!g)return;
+      g._mpRemote=data.id;
+      g.owner=owner;
+      remoteProjectiles.set(data.id,g);
+    }
+    Object.assign(g,{x:data.x,y:data.y,z:data.z,vx:data.vx,vy:data.vy,vz:data.vz,
+      fuse:Number.isFinite(data.fuse)?data.fuse:g.fuse,
+      spin:Number.isFinite(data.spin)?data.spin:g.spin});
+    g.mesh?.position?.set?.(g.x,g.y-.04,g.z);
+    if(g.mesh) {
+      g.mesh.rotation.y=g.spin;
+      g.mesh.rotation.x=g.spin*.7;
+    }
+    g.fly?.setPos?.(g.x,g.y,g.z);
+  }
+
+  function applyRemoteGrenadeEffect(message) {
+    const game=gameInstance(),mgr=game?.grenadeMgr;
+    if(!mgr)return;
+    const known=remoteProjectiles.get(message.id);
+    if(!known || !['flash','smoke','he','fire','decoy'].includes(message.effect))return;
+    const owner=known.owner;
+    releaseRemoteProjectile(message.id);
+    const projectile={
+      id:message.grenade,owner,
+      x:message.x,y:message.y,z:message.z,
+      def:{dmg:0.000001,range:8},done:false
+    };
+    try {
+      const method={
+        flash:'popFlash',smoke:'bloomSmoke',he:'explodeHE',fire:'igniteAt'
+      }[message.effect];
+      if(method)mgr[method]?.(projectile);
+      // Flash uses native visibility/facing checks; smoke and fire use
+      // native persistent particle/volume managers at the same coordinates.
+    } catch(error) {
+      console.warn('[Clutcher MP] Remote grenade effect:',error);
+    }
+  }
+
+  function installGrenadeHooks(game) {
+    const mgr=game?.grenadeMgr;
+    if(!mgr || mgr===previousGrenadeManager)return;
+    previousGrenadeManager=mgr;
+
+    const nativeThrow=mgr.throwFrom;
+    if(typeof nativeThrow==='function')mgr.throwFrom=function(owner,kind,...args) {
+      const before=this.list.length;
+      const result=nativeThrow.apply(this,arguments);
+      const g=this.list[before];
+      if (owner===game.player && g && NADE_TYPES.has(kind) && isReady) {
+        const id=String(++grenadeSerial);
+        g._mpLocal=id;
+        localProjectiles.set(id,g);
+        send({type:'grenade_throw',id,grenade:kind,x:g.x,y:g.y,z:g.z,
+          vx:g.vx,vy:g.vy,vz:g.vz,fuse:g.fuse,spin:g.spin});
+      }
+      return result;
+    };
+
+    // Only the thrower's native Clutcher physics simulates bounces.
+    // Receivers take its exact projectile samples instead of running
+    // potentially divergent local physics and fuse timers.
+    const nativeUpdate=mgr.update;
+    if(typeof nativeUpdate==='function')mgr.update=function(dt) {
+      const replica=this.list.filter(p=>p._mpRemote);
+      if(!replica.length)return nativeUpdate.apply(this,arguments);
+      this.list=this.list.filter(p=>!p._mpRemote);
+      try {return nativeUpdate.apply(this,arguments);}
+      finally {
+        this.list.push(...replica);
+        for(const g of replica) {
+          g.mesh?.position?.set?.(g.x,g.y-.04,g.z);
+          g.fly?.setPos?.(g.x,g.y,g.z);
+        }
+      }
+    };
+
+    for(const [method,effect] of [
+      ['popFlash','flash'],['bloomSmoke','smoke'],
+      ['igniteAt','fire'],['explodeHE','he']
+    ]) {
+      const native=mgr[method];
+      if(typeof native!=='function')continue;
+      mgr[method]=function(g) {
+        if (g?._mpLocal && isReady) {
+          send({type:'grenade_finish',id:g._mpLocal,effect,
+            x:g.x,y:g.y,z:g.z});
+          localProjectiles.delete(g._mpLocal);
+        }
+        return native.apply(this,arguments);
+      };
+    }
+  }
+
+  function publishGrenadePositions() {
+    const game=gameInstance();
+    if(!isReady || !joinedRoom || game?.state!=='playing')return;
+    installGrenadeHooks(game);
+    for(const [id,g] of localProjectiles) {
+      if(!game.grenadeMgr.list.includes(g)) {
+        localProjectiles.delete(id);
+        continue;
+      }
+      send({type:'grenade_state',id,x:g.x,y:g.y,z:g.z,
+        vx:g.vx,vy:g.vy,vz:g.vz,fuse:g.fuse,spin:g.spin});
+    }
+  }
+
   function publishGameState() {
     const game = gameInstance();
     const p = game?.player;
@@ -787,6 +933,7 @@
 
   setInterval(() => {
     publishGameState();
+    publishGrenadePositions();
     syncRemoteModels();
   }, 50);
 

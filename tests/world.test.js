@@ -43,3 +43,44 @@ test("movement is server-owned and snapshots contain both players", () => {
   assert.equal(snapshot.message.players.find((p) => p.id === "p1").x, 120 / TICK_HZ);
   assert.equal(snapshot.recipients.length, 2);
 });
+
+test("new arrivals are assigned to the smallest team, never by client choice", () => {
+  const world = new World();
+  const sessions = Array.from({ length: 5 }, (_, i) => ({ id: "p" + i, roomId: null }));
+  const teams = sessions.map((session) =>
+    world.join(session, "public", {}, { team: "T" }).team
+  );
+  assert.deepEqual(teams, ["CT", "T", "CT", "T", "CT"]);
+  assert.equal(sessions[0].team, "CT");
+  assert.equal(sessions[1].team, "T");
+  world.leave(sessions[1]);
+  const newcomer = { id: "p5", roomId: null };
+  assert.equal(world.join(newcomer, "public", {}).team, "T");
+});
+
+test("room map/mode come from the first joiner and later clients inherit them", () => {
+  const world = new World();
+  const first = { id: "one", roomId: null };
+  const second = { id: "two", roomId: null };
+  const own = world.join(first, "lobby", {}, { map: "dusker", mode: "dm" });
+  assert.deepEqual(own, { team: "CT", map: "dusker", mode: "dm" });
+  const joined = world.join(second, "lobby", {}, { map: "oasis", mode: "defusal" });
+  assert.deepEqual(joined, { team: "T", map: "dusker", mode: "dm" });
+  const [snapshot] = world.tick();
+  assert.deepEqual(snapshot.message.players.map((p) => p.team), ["CT", "T"]);
+  world.leave(first);
+  world.leave(second);
+  assert.equal(world.roomSettings.has("lobby"), false);
+});
+
+test("the only player may change map before Play, but not once another has joined", () => {
+  const world = new World();
+  const a = { id: "a", roomId: null };
+  const b = { id: "b", roomId: null };
+  world.join(a, "lobby", {}, { map: "oasis", mode: "defusal" });
+  assert.deepEqual(world.join(a, "lobby", {}, { map: "dusker", mode: "dm" }),
+    { team: "CT", map: "dusker", mode: "dm" });
+  world.join(b, "lobby", {});
+  assert.deepEqual(world.join(a, "lobby", {}, { map: "oasis", mode: "defusal" }),
+    { team: "CT", map: "dusker", mode: "dm" });
+});

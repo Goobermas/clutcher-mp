@@ -51,7 +51,7 @@ If you use that tunnel, leave the server's `HOST` at `127.0.0.1`, and open `http
 
 Install [client/clutcher-mp.user.js](client/clutcher-mp.user.js) into Tampermonkey to connect from the Clutcher HTTPS game page. The userscript has a room/connection HUD and an independent player-position minimap. This is **not yet real in-game player synchronization**.
 
-**WSS required:** The script targets `wss://mp.sillyhack.com:8085/ws`, but the default Node server speaks unencrypted `ws://`. Set up trusted TLS on that port or put a WSS reverse proxy / Cloudflare Tunnel on 443 and change the script's endpoint to `wss://mp.sillyhack.com/ws`. See [setup and limitations](docs/tampermonkey.md).
+**Existing WSS proxy:** The script now targets `wss://mp.sillyhack.com/ws` via your existing HTTPS/WSS reverse proxy (public port 443). Node.js stays on internal port `8085`. Tampermonkey matches both HTTP and HTTPS Clutcher pages. The previous default `:8085` WSS URL is automatically migrated. See [setup and limitations](docs/tampermonkey.md).
 
 ## Development
 

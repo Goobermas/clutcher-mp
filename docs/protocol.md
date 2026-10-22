@@ -182,7 +182,7 @@ The WebSocket input limit is 8 KiB per message.
 
 `action` now accepts these **visual-only** `kind` values:
 
-`fire`, `reload`, `jump`, `land`, `equip`, `inspect`,
+`fire`, `reload`, `jump`, `land`, `equip`,
 `knife`, `step`, `weapon_sound`, `grenade_prep`,
 `grenade_throw`, `scope`, `crouch`, `death`, `spawn`.
 
@@ -199,3 +199,9 @@ The server relays these to other room members as `player_action`. These
 events animate models and audio only and **cannot award damage/kills**.
 Skin/item persistence, validated ownership and identical animation clips
 for every weapon are separate future milestones.
+
+### v0.5.2: Inspect is not networked
+
+The game provides no third-person inspect animation. The `inspect` action was
+removed from the server allowlist and Tampermonkey client. First-person inspect
+still functions locally and does not create a multiplayer animation event.

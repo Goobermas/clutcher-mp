@@ -55,6 +55,7 @@
   const remoteModels = new Map();
   let remoteConstructor = null;
   let lastGrounded = true;
+  let lastAlive = null;
   let lastSentWeapon = null;
 
   // These are document-level game elements, outside our shadow DOM.
@@ -426,9 +427,9 @@
         if (model.cs2Agent?.root) model.cs2Agent.root.visible = true;
         if (model.shadow) model.shadow.visible = true;
       } else if (!data.alive && model.alive) {
-        model.alive = false;
-        if (model.cs2Agent?.root) model.cs2Agent.root.visible = false;
-        if (model.shadow) model.shadow.visible = false;
+        // Preserve the native death clip/ragdoll instead of deleting the model.
+        try { model.die?.('chest', false, null); }
+        catch { model.alive = false; }
       } else if (data.alive && model.cs2Agent?.root) {
         model.cs2Agent.root.visible = true;
       }
@@ -662,6 +663,10 @@
       firing: !!game.input?.mouse1,
       melee: appearance.weapon === 'knife' && !!game.input?.mouse1
     });
+    if (lastAlive !== null && lastAlive !== !!p.alive) {
+      sendVisualAction(p.alive ? 'spawn' : 'death');
+    }
+    lastAlive = !!p.alive;
     if (lastGrounded && !p.onGround && p.vy > 0.5) {
       send({ type:'action', kind:'jump' });
     } else if (!lastGrounded && p.onGround) {

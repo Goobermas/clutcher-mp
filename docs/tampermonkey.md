@@ -68,7 +68,7 @@ appearance rather than picking a generic bot loadout. The remote bot's agent
 renderer receives weapon paint kit, skin name, float/wear, seed, gloves and
 the correct special knife world model when present.
 
-Visual events now cover drawing/switching weapons, inspecting, timed reloads,
+Visual events now cover drawing/switching weapons, timed reloads,
 clip in/out/bolt sounds, fire/tracer, knife attack, jump/land, footsteps,
 scope transitions, grenade-throw gestures and death/respawn.
 Locomotion, crouch and air state follow networked 3D state. Existing bot AI
@@ -79,21 +79,17 @@ no synchronized server-side damage, bomb or grenade physics, and some skins,
 stickers or weapon-specific third-person animations may require further
 asset-specific work. Live visual behavior hasn't been verified yet.
 
-## v0.5.1 reload/inspect repair
+## v0.5.1 reload repair and v0.5.2 inspect removal
 
-Reload was not being broadcast because the old hook used `weapons.reload`,
-whereas the game calls `weapons.startReload()`. v0.5.1 listens to the correct
-entry point and passes the third-person world-model ID to its real reload
-animation API. Inspect is recognized from the viewmodel's inspect call.
-If the third-person agent has no inspect clip, the remote gun tilts and
-raises temporarily rather than staying completely still. A matching fallback
-is provided for weapons with no available third-person reload clip.
+Reload is broadcast from the actual `weapons.startReload()` entry point and
+played using the matching native third-person world-model reload clip. If that
+clip does not exist, the script uses a reload-only held-weapon motion.
+Reload events can wait briefly for the remote weapon mesh to finish loading.
 
-Both actions wait briefly for the receiving player's asynchronously loaded
-weapon model. These changes are isolated to the Tampermonkey client;
-the existing v0.5 Node.js server already supports the events.
+Clutcher has no corresponding third-person inspect animation. In v0.5.2 the
+userscript **does not send inspect packets or create fake inspect movement**.
+Local first-person inspect remains untouched.
 
-**To verify:** both players install the latest script, join the same room and
-load into a map. Press R to reload a non-full gun and inspect with the game's
-Inspect binding. Open DevTools to inspect `[Clutcher MP]` logs if a specific
-weapon still lacks a native third-person clip.
+**To verify:** both players install the current script, join the same room,
+load the map, and press R with a partly empty magazine. Check whether the
+other player sees the reload. No remote inspect animation should occur.

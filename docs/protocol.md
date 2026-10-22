@@ -205,3 +205,51 @@ for every weapon are separate future milestones.
 The game provides no third-person inspect animation. The `inspect` action was
 removed from the server allowlist and Tampermonkey client. First-person inspect
 still functions locally and does not create a multiplayer animation event.
+
+## Objective networking (v0.6)
+
+New client -> server message `{"type":"objective_intent","kind":"plant"}`
+(or `"defuse"`) is sent repeatedly while the mapped use/plant input is held.
+The server requires a loaded alive player, stationary position, the assigned
+T carrier inside a recognized bombsite, or a CT near the placed C4. Server
+advances progress using monotonic time and cancels if intent stops for >450ms.
+
+The `match_state` broadcast now includes `objective` with fields
+`carrier`, `planter`, `plantProgress`, `defuser`,
+`defuseProgress`, `placed` and `duration`.
+Planting takes 3.2s, the planted timer is 40s, and base defusing takes 10s.
+The native game controller renders the planted C4 but **does not decide
+the outcome**; room server transitions to `planted` and awards T on timer
+expiry or CT on completed defuse.
+
+## Grenade network protocol (v0.6)
+
+Messages sent by the owner:
+
+```json
+{"type":"grenade_throw","id":"1","grenade":"flash","x":1,"y":2,"z":3,"vx":9,"vy":7,"vz":-4,"fuse":1.6,"spin":0}
+```
+
+```json
+{"type":"grenade_state","id":"1","x":1.4,"y":2.3,"z":2.8,"vx":8.7,"vy":6.2,"vz":-3.7,"fuse":1.55,"spin":0.4}
+```
+
+```json
+{"type":"grenade_finish","id":"1","effect":"flash","x":2,"y":1.5,"z":0}
+```
+
+Server validates ownership, trajectory changes and effect/type pairing.
+It broadcasts these as `grenade_spawn`, `grenade_state`, and
+`grenade_effect`; the server room-uniquifies IDs using the sender's session
+ID. Valid grenade types are `he`, `flash`, `smoke`, `molotov`,
+`incend`, and `decoy`. Effect types are `he`, `flash`,
+`smoke`, `fire`, and `decoy`.
+
+Unlike sending throw direction alone, the owner reports every actual
+post-collision position/velocity/fuse sample. Peers draw a remote grenade
+using Clutcher's native model but deliberately **skip physics for that
+replica**, and trigger its flash/smoke/fire/explosion presentation only from
+the authoritative effect packet. Exact replicated landing coordinates are
+sample-aligned, but latency and local effect-particle randomness can differ.
+
+No remote player health/damage is changed by these visuals in this milestone.

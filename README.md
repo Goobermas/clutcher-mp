@@ -111,34 +111,25 @@ the game's `_botSkin()` / `_botGloves()` selection and `setWeapon()` /
 
 The state stream carries crouch, motion/velocity, airborne, alive/dead,
 aim angle, weapon choice, scope, reload, fire, walk and melee *states*. Discrete
-animation events include draw/equip, inspect, reload timing and empty-mag
+animation events include draw/equip, reload timing and empty-mag
 status, clipout/clipin/bolt sounds, normal gunfire/tracers, knife stab/slash,
 jump/land, footsteps, scope changes, grenade throw gesture, death and respawn.
 
 **Known limits:** These are visual client-reported states, not server-validated
 combat or inventories. Sticker/charm rendering, full 3D grenade objects,
 game-specific clip availability and exact animation parity across all weapons
-are not verified. Some third-person assets have no matching first-person
-inspect clip. The script has no live end-to-end multiplayer test yet.
+are not verified. Third-person inspect isn't synchronized (no native clip exists). The script has no live end-to-end multiplayer test yet.
 
-## Reload / inspect fix (v0.5.1)
+## Reload animation fix (v0.5.1)
 
-The supplied game's real reload entry point is `game.weapons.startReload()`,
-not `game.weapons.reload()`. Earlier userscripts watched the wrong method,
-so they missed reload events. We now observe the true native method **after**
-it changes weapon state, and replay the matching third-person weapon reload
-clip through `cs2Agent.reload()` using its resolved world-model weapon ID.
-A visible procedural weapon-lower fallback is used only if the third-person
-reload asset does not provide that clip.
+The game reloads through `game.weapons.startReload()`. We observe this native call
+and play the corresponding third-person reload clip with `cs2Agent.reload()`.
+If the weapon has no third-person reload clip, the remote held weapon shows a
+short reload-only fallback motion. Reload events wait briefly while the remote
+weapon mesh is loading.
 
-Inspect occurs in `game.viewmodel.inspect()` and `game.cs2.inspect()`;
-third-person agents have no equivalent universal inspect API. The script now
-observes the local viewmodel call and plays a third-person `loco` inspect
-action if available, otherwise smoothly tilts/raises the remote held weapon
-for ~2.4s before restoring the original pose. This fallback is **not** a
-pixel-perfect recreation of the first-person inspect motion.
+## Inspect behavior (v0.5.2)
 
-Both events are queued briefly if the receiving client's remote weapon mesh is
-still loading, then discarded if the model does not become available within
-two seconds. The userscript re-hooks after the game recreates its weapons or
-viewmodel objects, without wrapping methods twice.
+**Inspect is local only.** Clutcher has no third-person inspect animation.
+The multiplayer userscript does not observe, send, receive or emulate inspect,
+and never touches the game's native first-person inspect behavior.

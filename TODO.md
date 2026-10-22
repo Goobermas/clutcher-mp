@@ -52,7 +52,17 @@
 
 ## Phase 4 — Gameplay
 
-- [x] Add per-room server-owned shared 5s countdown / 10min round / 5s result timer.
+- [x] Match the native game mode timings: Defusal 5s freeze, 115.2s rounds, 8/15 target; TDM 600s and 6s result period.
+- [x] Add remote human players as AI-disabled Clutcher bot models, synchronized to real 3D coordinates.
+- [x] Relay validated player transform, crouch, airborne and weapon state.
+- [x] Relay shot visuals, reloads, jumps and landing events to other clients.
+- [x] Make server trigger native round respawns at match boundaries.
+- [x] Test game-state validation, action routing, and native match deadlines.
+- [ ] Verify remote player appearance, movement and animations in two live Clutcher tabs.
+- [ ] Integrate actual combat, sound, skins and actions more fully.
+
+
+- [x] Add per-room server-owned timers, tailored per selected mode.
 - [x] Gate match start on one loaded CT and T; pause/reset countdown when teams become unready.
 - [x] Broadcast `match_state` with timer, round, and CT/T scores.
 - [x] Display server clock/score in Tampermonkey panel and native Defusal HUD.
@@ -81,6 +91,6 @@
 1. [ ] On the Ubuntu VPS: `git pull && npm install && npm test && npm start`.
 2. [ ] Verify `/health` and connect two tabs (SSH tunnel recommended).
 3. [ ] Confirm two-player WASD synchronization and disconnect cleanup.
-4. [ ] Only then implement the actual Clutcher client adapter.
+4. [ ] Test visual remote bots and action animations in two live game sessions.
 
 **No Rust/Cargo required.**

@@ -1,8 +1,8 @@
 # Clutcher MP
 
-Fresh Node.js multiplayer server built from scratch for a browser-based game. **No Rust or Cargo required.**
+Fresh Node.js multiplayer server built from scratch for a browser-based game. **No Rust or Cargo required.** The v0.2 userscript also starts Clutcher's actual map with **0 bots** and **server-assigned CT/T teams**.
 
-The v0.1 milestone is intentionally simple: two browser clients join the same room and see each other's movements on a canvas test page.
+The networking v0.1 milestone is intentionally simple: two browser clients join the same room and see each other's movements on a canvas test page.
 
 ## Requirements
 
@@ -49,7 +49,7 @@ If you use that tunnel, leave the server's `HOST` at `127.0.0.1`, and open `http
 
 ## Tampermonkey prototype client
 
-Install [client/clutcher-mp.user.js](client/clutcher-mp.user.js) into Tampermonkey to connect from the Clutcher HTTPS game page. The userscript has a room/connection HUD and an independent player-position minimap. This is **not yet real in-game player synchronization**.
+Install [client/clutcher-mp.user.js](client/clutcher-mp.user.js) into Tampermonkey to connect from the Clutcher HTTPS game page. The userscript has a room/connection HUD and an independent player-position minimap. The native **PLAY** button now launches the game map directly, with bots disabled and CT/T automatically assigned by the server. Remote 3D player models and real gameplay state synchronization are **not implemented yet**.
 
 **Existing WSS proxy:** The script now targets `wss://mp.sillyhack.com/ws` via your existing HTTPS/WSS reverse proxy (public port 443). Node.js stays on internal port `8085`. Tampermonkey matches both HTTP and HTTPS Clutcher pages. The previous default `:8085` WSS URL is automatically migrated. See [setup and limitations](docs/tampermonkey.md).
 

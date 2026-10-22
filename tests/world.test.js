@@ -165,9 +165,10 @@ test("visual metadata is scrubbed and events preserve weapon and animation param
   assert.equal(appearance.name.length,160);
   assert.equal(Object.hasOwn(appearance,"constructor"),false);
   assert.equal(appearance.nested.seed,5);
-  const inspect=world.relayAction(one,{kind:"inspect",weapon:"ak47"});
-  assert.deepEqual(inspect.recipients,[...world.rooms.get("room").values()].filter(p=>p.id!=="one").map(p=>p.socket));
-  assert.deepEqual(inspect.message,{type:"player_action",id:"one",kind:"inspect",weapon:"ak47"});
+  assert.throws(() => world.relayAction(one, {kind:"inspect",weapon:"ak47"}), /Unsupported/);
+  const equip=world.relayAction(one,{kind:"equip",weapon:"ak47"});
+  assert.deepEqual(equip.recipients,[...world.rooms.get("room").values()].filter(p=>p.id!=="one").map(p=>p.socket));
+  assert.deepEqual(equip.message,{type:"player_action",id:"one",kind:"equip",weapon:"ak47"});
   const knife=world.relayAction(one,{kind:"knife",heavy:true});
   assert.equal(knife.message.heavy,true);
   const reload=world.relayAction(one,{kind:"reload",duration:8.4,empty:true});

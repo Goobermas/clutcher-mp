@@ -1,3 +1,4 @@
+import { siteForPosition } from "./objectives.js";
 // Match timings taken from Clutcher's supplied main.js / in-game help.
 // Bomb Defuse: 5s freeze, 115.2s round (displayed as 1:55), 15 rounds,
 // first to 8, no halftime in the active native preset, 40s C4 timer.
@@ -28,6 +29,12 @@ export class RoomMatch {
     this.revision = 0;
     this.winner = null;
     this.matchWinner = null;
+    this.objective = this.freshObjective();
+  }
+
+  freshObjective() {
+    return {carrier:null, planter:null, plantStart:null, plantSeen:0, site:null,
+      defuser:null, defuseStart:null, defuseSeen:0, placed:null};
   }
 
   get rules() { return RULES[this.mode] ?? RULES.defusal; }

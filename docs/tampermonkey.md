@@ -59,3 +59,22 @@ The browser may additionally block WebSockets via the game's Content Security Po
 2. Confirm the TLS endpoint works and presents a valid certificate.
 3. Install script in two browser sessions, both joining `lobby`.
 4. Press Play in both Clutcher tabs. Verify the other's AI-disabled character model moves at the same coordinates, turns, crouches and shows firing/reload animations.
+
+
+## Real cosmetics and broader animation sync (v0.5)
+
+This version reads the game engine's currently equipped weapon and glove
+appearance rather than picking a generic bot loadout. The remote bot's agent
+renderer receives weapon paint kit, skin name, float/wear, seed, gloves and
+the correct special knife world model when present.
+
+Visual events now cover drawing/switching weapons, inspecting, timed reloads,
+clip in/out/bolt sounds, fire/tracer, knife attack, jump/land, footsteps,
+scope transitions, grenade-throw gestures and death/respawn.
+Locomotion, crouch and air state follow networked 3D state. Existing bot AI
+remains disabled; every remote actor represents a connected human.
+
+A visual state is **not** an authoritative gameplay event. There is still
+no synchronized server-side damage, bomb or grenade physics, and some skins,
+stickers or weapon-specific third-person animations may require further
+asset-specific work. Live visual behavior hasn't been verified yet.

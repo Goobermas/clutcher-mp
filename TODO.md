@@ -36,7 +36,14 @@
 - [x] Add a Tampermonkey connection/testing HUD for rooms, 2D movement, and snapshots (not game-integrated).
 - [x] Configure the userscript for the existing WSS proxy endpoint on port 443 (backend on 8085).
 - [x] Match both HTTP and HTTPS Clutcher game pages.
+- [x] Intercept native Play button to load the selected map with zero bots.
+- [x] Hide native team selection; use server-balanced CT/T assignments.
+- [x] Lock map/mode per room and share them across joiners.
+- [x] Add team assignment and room-settings unit tests.
 - [ ] Verify that the existing reverse proxy works with the new Node.js server and client.
+- [ ] Test Play auto-loading on Clutcher v0.21 in two browser sessions.
+- [ ] Prevent native single-player Defusal logic from ending empty rounds unexpectedly.
+- [ ] Synchronize actual 3D player transforms and spawn remote player models.
 
 - [ ] Identify legal/usable game-client integration points.
 - [ ] Write new client networking adapter for protocol v1.
